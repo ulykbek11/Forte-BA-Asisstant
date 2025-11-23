@@ -3,6 +3,9 @@ import { Bot, User } from "lucide-react";
 import { motion } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
+import { useEffect, useState } from "react";
+import mermaid from "mermaid";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -59,22 +62,26 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
             <span className="text-sm text-muted-foreground">Анализирую...</span>
           </div>
         ) : (
-          <div className={cn("text-sm leading-relaxed")}> 
+          <div className={cn("text-sm leading-relaxed whitespace-pre-wrap")}> 
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkBreaks]}
               components={{
                 a: ({node, ...props}) => (
                   <a {...props} target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary-hover" />
                 ),
-                code: ({inline, className, children, ...props}) => (
-                  inline ? (
+                code: ({inline, className, children, ...props}) => {
+                  const code = String(children || "");
+                  if (!inline && /language-mermaid/.test(className || "")) {
+                    return <MermaidBlock code={code} />;
+                  }
+                  return inline ? (
                     <code className={cn("px-1 py-0.5 rounded bg-muted text-foreground", className)} {...props}>{children}</code>
                   ) : (
                     <pre className="overflow-x-auto p-3 rounded bg-muted">
                       <code className={className} {...props}>{children}</code>
                     </pre>
-                  )
-                ),
+                  );
+                },
                 ul: ({node, ...props}) => <ul className="list-disc pl-5 space-y-1" {...props} />,
                 ol: ({node, ...props}) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
                 blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-primary/40 pl-3 italic" {...props} />,
@@ -102,3 +109,22 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
 };
 
 export default ChatMessage;
+const MermaidBlock = ({ code }: { code: string }) => {
+  const [svg, setSvg] = useState("");
+  useEffect(() => {
+    mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+    const id = "mermaid-" + Math.random().toString(36).slice(2);
+    mermaid
+      .render(id, code)
+      .then((res: any) => {
+        const out = res.svg || res;
+        if (typeof out === "string" && out.includes("Syntax error in text")) {
+          setSvg(`<pre class="overflow-x-auto p-3 rounded bg-muted">${code}</pre>`);
+        } else {
+          setSvg(out);
+        }
+      })
+      .catch(() => setSvg(`<pre class="overflow-x-auto p-3 rounded bg-muted">${code}</pre>`));
+  }, [code]);
+  return <div className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />;
+};
