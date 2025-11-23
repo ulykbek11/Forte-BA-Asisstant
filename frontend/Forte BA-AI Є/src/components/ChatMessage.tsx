@@ -1,6 +1,8 @@
 import { cn } from "@/lib/utils";
 import { Bot, User } from "lucide-react";
 import { motion } from "framer-motion";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 interface ChatMessageProps {
   role: "user" | "assistant";
@@ -57,7 +59,36 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
             <span className="text-sm text-muted-foreground">Анализирую...</span>
           </div>
         ) : (
-          <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
+          <div className={cn("text-sm leading-relaxed")}> 
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({node, ...props}) => (
+                  <a {...props} target="_blank" rel="noopener noreferrer" className="underline text-primary hover:text-primary-hover" />
+                ),
+                code: ({inline, className, children, ...props}) => (
+                  inline ? (
+                    <code className={cn("px-1 py-0.5 rounded bg-muted text-foreground", className)} {...props}>{children}</code>
+                  ) : (
+                    <pre className="overflow-x-auto p-3 rounded bg-muted">
+                      <code className={className} {...props}>{children}</code>
+                    </pre>
+                  )
+                ),
+                ul: ({node, ...props}) => <ul className="list-disc pl-5 space-y-1" {...props} />,
+                ol: ({node, ...props}) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
+                blockquote: ({node, ...props}) => <blockquote className="border-l-4 border-primary/40 pl-3 italic" {...props} />,
+                h1: ({node, ...props}) => <h1 className="text-lg font-semibold" {...props} />,
+                h2: ({node, ...props}) => <h2 className="text-base font-semibold" {...props} />,
+                h3: ({node, ...props}) => <h3 className="text-sm font-semibold" {...props} />,
+                table: ({node, ...props}) => <div className="overflow-x-auto"><table className="min-w-full text-sm" {...props} /></div>,
+                th: ({node, ...props}) => <th className="border border-border px-2 py-1 bg-muted" {...props} />,
+                td: ({node, ...props}) => <td className="border border-border px-2 py-1" {...props} />,
+              }}
+            >
+              {content}
+            </ReactMarkdown>
+          </div>
         )}
       </div>
 
