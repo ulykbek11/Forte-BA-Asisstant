@@ -42,8 +42,15 @@ const ChatInterface = () => {
 
     try {
       if (!supabase) throw new Error("Supabase не сконфигурирован");
+      const systemInstruction =
+        "Ты бизнес-аналитик. Отвечай только по задачам бизнес-аналитики: сбор и анализ требований, артефакты, документация, процессы и методологии. На вопросы вне этой области вежливо отказывай, кратко объясняй фокус и предлагай релевантные BA шаги.";
+      const apiMessages = [
+        { role: "system", content: systemInstruction },
+        ...messages,
+        { role: "user", content: userMessage },
+      ];
       const { data, error } = await supabase.functions.invoke("ba-assistant", {
-        body: { messages: [...messages, { role: "user", content: userMessage }], options: { publish } }
+        body: { messages: apiMessages, options: { publish, domain: "ba" } }
       });
       if (error) throw error;
       setMessages(prev => [...prev, { role: "assistant", content: data.response }]);
