@@ -56,7 +56,7 @@ serve(async (req) => {
         case "user-stories":
           return "Сформируй EPIC и набор User Stories. Для каждой Story добавь критерии приемки (GWT), приоритет и ограниченные допущения.";
         case "process":
-          return "Сформируй документ описания процесса: назначение, границы, роли, входы/выходы, шаги процесса, бизнес-правила. Обязательно добавь блок ```mermaid``` с диаграммой процесса (flowchart).";
+          return "Сформируй документ описания процесса: назначение, границы, роли, входы/выходы, шаги процесса, бизнес-правила. Обязательно добавь блок ```mermaid``` с диаграммой процесса (flowchart LR — слева направо).";
         case "kpi":
           return "Сформируй документ KPI/метрик: цели, карта метрик (определение, формула, периодичность, источники данных), пороги/алерты, визуализация (описание).";
         default:
@@ -95,22 +95,22 @@ serve(async (req) => {
     const data = await response.json()
     let assistantMessage = data.choices?.[0]?.message?.content ?? ""
     if (!/```mermaid[\s\S]*?```/i.test(assistantMessage)) {
-      assistantMessage += `\n\n\n## Диаграмма процесса (Mermaid)\n\n\`\`\`mermaid\nflowchart TD\n  A([Старт]) --> B[Сбор данных]\n  B --> C{Проверка условий}\n  C -- Да --> D[Эскалация]\n  C -- Нет --> E[Авто-обработка]\n  D --> F([Завершение])\n  E --> F\n\`\`\``
+      assistantMessage += `\n\n\n## Диаграмма процесса (Mermaid)\n\n\`\`\`mermaid\nflowchart LR\n  A([Старт]) --> B[Сбор данных]\n  B --> C{Проверка условий}\n  C -- Да --> D[Эскалация]\n  C -- Нет --> E[Авто-обработка]\n  D --> F([Завершение])\n  E --> F\n\`\`\``
     }
 
     let confluence: { published: boolean; url?: string; pageId?: string; error?: string } | undefined
 
     if (options?.publish) {
-      const CONFLUENCE_BASE_URL = Deno.env.get("CONFLUENCE_BASE_URL")
-      const CONFLUENCE_EMAIL = Deno.env.get("CONFLUENCE_EMAIL")
-      const CONFLUENCE_API_TOKEN = Deno.env.get("CONFLUENCE_API_TOKEN")
-      const CONFLUENCE_SPACE_KEY = Deno.env.get("CONFLUENCE_SPACE_KEY")
-      const CONFLUENCE_PARENT_PAGE_ID = Deno.env.get("CONFLUENCE_PARENT_PAGE_ID")
+      const CONFLUENCE_BASE_URL = options?.confluence?.baseUrl || Deno.env.get("CONFLUENCE_BASE_URL")
+      const CONFLUENCE_EMAIL = options?.confluence?.email || Deno.env.get("CONFLUENCE_EMAIL")
+      const CONFLUENCE_API_TOKEN = options?.confluence?.apiToken || Deno.env.get("CONFLUENCE_API_TOKEN")
+      const CONFLUENCE_SPACE_KEY = options?.confluence?.spaceKey || Deno.env.get("CONFLUENCE_SPACE_KEY")
+      const CONFLUENCE_PARENT_PAGE_ID = options?.confluence?.parentPageId || Deno.env.get("CONFLUENCE_PARENT_PAGE_ID")
 
       if (!CONFLUENCE_BASE_URL || !CONFLUENCE_EMAIL || !CONFLUENCE_API_TOKEN || !CONFLUENCE_SPACE_KEY) {
         confluence = { published: false, error: "Confluence окружение не настроено" }
       } else {
-        const title = options?.title || `Бизнес-требования — ${new Date().toISOString()}`
+        const title = options?.confluence?.title || `Бизнес-требования — ${new Date().toISOString()}`
         const htmlMarked = marked.parse(assistantMessage)
         const htmlForConfluence = htmlMarked
           .replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g, (_m, code) => {

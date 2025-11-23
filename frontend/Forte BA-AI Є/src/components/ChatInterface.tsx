@@ -10,6 +10,11 @@ import { motion } from "framer-motion";
 import { supabase } from "@/integrations/client";
 import { marked } from "marked";
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import html2pdf from "html2pdf.js";
+import { Packer, Document, Paragraph, HeadingLevel, TextRun } from "docx";
+import * as XLSX from "xlsx";
 
 interface Message {
   role: "user" | "assistant";
@@ -21,7 +26,13 @@ const ChatInterface = () => {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [publish, setPublish] = useState(false);
-  const [docType, setDocType] = useState<string>("brd");
+  const [fileFormat, setFileFormat] = useState<string>("html");
+  const [confBaseUrl, setConfBaseUrl] = useState("");
+  const [confSpaceKey, setConfSpaceKey] = useState("");
+  const [confParentId, setConfParentId] = useState("");
+  const [confEmail, setConfEmail] = useState("");
+  const [confToken, setConfToken] = useState("");
+  const [confTitle, setConfTitle] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const getLastAssistantMessage = () => {
@@ -51,29 +62,14 @@ const ChatInterface = () => {
 
     try {
       if (!supabase) throw new Error("Supabase не сконфигурирован");
-      const systemInstruction = (() => {
-        switch (docType) {
-          case "brd":
-            return "Ты бизнес-аналитик. Сформируй документ бизнес-требований (BRD) в строгом Markdown: Заголовок, Цель, Описание, Scope, Заинтересованные стороны, Бизнес-правила, Нефункциональные требования, Ограничения, Риски, KPI. Возвращай только документ без лишнего текста.";
-          case "use-case":
-            return "Ты бизнес-аналитик. Сформируй Use Case документ: список акторов, перечень вариантов использования, детальные сценарии (основной/альтернативные потоки), предусловия/постусловия, исключения. Добавь диаграммы процессов: блок mermaid с ключевым потоком. Возвращай только документ.";
-          case "user-stories":
-            return "Ты бизнес-аналитик. Сформируй набор User Stories в виде EPIC -> Stories. Для каждой Story: формулировка, ценность, критерии приемки (GWT), приоритет. Возвращай только документ.";
-          case "process":
-            return "Ты бизнес-аналитик. Сформируй документ описания процесса: назначение, границы, роли, входы/выходы, шаги процесса (списком), бизнес-правила. Обязательно добавь блок кода mermaid с диаграммой процесса (flowchart). Возвращай только документ.";
-          case "kpi":
-            return "Ты бизнес-аналитик. Сформируй документ KPI/метрик: цели, карта метрик (определение, формула, периодичность, источники данных), пороги/алерты, визуализация (описание). Возвращай только документ.";
-          default:
-            return "Ты бизнес-аналитик. Сформируй комбинированный документ требований: основные разделы BRD, ключевые Use Case, 3–5 User Stories, шаги процесса (текст), KPI. Добавь блок mermaid для процесса. Возвращай только документ.";
-        }
-      })();
+      const systemInstruction = "Ты бизнес-аналитик. Всегда возвращай полноценный самодостаточный документ требований в строгом Markdown: Заголовок, Цель, Описание, Scope, Заинтересованные стороны, Бизнес-правила, Use Case, User Stories, Процесс (текстовое описание), KPI. Добавляй диаграммы: блок кода mermaid для процесса и блок кода plantuml. Возвращай только документ без лишнего текста.";
       const apiMessages = [
         { role: "system", content: systemInstruction },
         ...messages,
         { role: "user", content: userMessage },
       ];
       const { data, error } = await supabase.functions.invoke("ba-assistant", {
-        body: { messages: apiMessages, options: { publish, domain: "ba", docType } }
+        body: { messages: apiMessages, options: { publish, domain: "ba", fileFormat, confluence: { baseUrl: confBaseUrl, spaceKey: confSpaceKey, parentPageId: confParentId, email: confEmail, apiToken: confToken, title: confTitle } } }
       });
       if (error) throw error;
       setMessages(prev => [...prev, { role: "assistant", content: data.response }]);
@@ -158,16 +154,148 @@ const ChatInterface = () => {
 ${htmlBody}
 </body>
 </html>`;
-
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `BA_Document_${new Date().toISOString().slice(0,19).replace(/[:T]/g, "-")}.html`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, "-");
+    if (fileFormat === "html") {
+      const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `BA_Document_${stamp}.html`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      return;
+    }
+    if (fileFormat === "docx") {
+      const parseSections = (md: string) => {
+        const lines = md.split(/\r?\n/);
+        const sections: { name: string; content: string[] }[] = [];
+        let current: { name: string; content: string[] } | null = null;
+        for (const line of lines) {
+          const m = line.match(/^\s{0,3}(#+)\s+(.*)$/);
+          if (m) {
+            if (current) sections.push(current);
+            current = { name: m[2].trim(), content: [] };
+          } else {
+            if (!current) current = { name: "Документ", content: [] };
+            current.content.push(line);
+          }
+        }
+        if (current) sections.push(current);
+        return sections.map(s => [s.name, s.content.join("\n").trim()]);
+      };
+      const sections = parseSections(cleaned);
+      const doc = new Document({
+        sections: [
+          {
+            properties: {},
+            children: sections.flatMap(([title, body]) => {
+              const paras: Paragraph[] = [];
+              paras.push(new Paragraph({ text: String(title), heading: HeadingLevel.HEADING_2 }));
+              body.split(/\n\n+/).forEach(block => {
+                paras.push(new Paragraph({ children: [new TextRun({ text: block })] }));
+              });
+              return paras;
+            }),
+          },
+        ],
+      });
+      Packer.toBlob(doc).then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `BA_Document_${stamp}.docx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      }).catch(() => {
+        toast({ title: "Ошибка", description: "Не удалось создать DOCX", variant: "destructive" });
+      });
+      return;
+    }
+    if (fileFormat === "pdf") {
+      const container = document.createElement("div");
+      container.style.position = "fixed";
+      container.style.left = "-10000px";
+      container.style.width = "800px";
+      container.innerHTML = htmlBody;
+      document.body.appendChild(container);
+      const renderMermaid = async () => {
+        try {
+          const w: any = window as any;
+          if (w.mermaid) {
+            w.mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+            const blocks = container.querySelectorAll('.mermaid');
+            let idx = 0;
+            for (const el of Array.from(blocks)) {
+              const code = (el.textContent || '') as string;
+              try {
+                const res = await w.mermaid.render('pdf_m' + (idx++), code);
+                const out = (res as any).svg || res;
+                if (typeof out === 'string' && out.includes('Syntax error in text')) {
+                  (el as HTMLElement).outerHTML = '<pre>' + code.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+                } else {
+                  (el as HTMLElement).innerHTML = out as string;
+                }
+              } catch {
+                (el as HTMLElement).outerHTML = '<pre>' + code.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+              }
+            }
+          }
+        } catch {}
+      };
+      renderMermaid().then(() => {
+        try {
+          (html2pdf as any)().from(container).set({ margin: 10, filename: `BA_Document_${stamp}.pdf`, html2canvas: { scale: 2 } }).save();
+        } catch (e) {
+          toast({ title: "Ошибка", description: "Не удалось создать PDF", variant: "destructive" });
+        } finally {
+          document.body.removeChild(container);
+        }
+      });
+      return;
+    }
+    if (fileFormat === "xlsx") {
+      try {
+        const parseSections = (md: string) => {
+          const lines = md.split(/\r?\n/);
+          const sections: { name: string; content: string[] }[] = [];
+          let current: { name: string; content: string[] } | null = null;
+          for (const line of lines) {
+            const m = line.match(/^\s{0,3}(#+)\s+(.*)$/);
+            if (m) {
+              if (current) sections.push(current);
+              current = { name: m[2].trim(), content: [] };
+            } else {
+              if (!current) current = { name: "Документ", content: [] };
+              current.content.push(line);
+            }
+          }
+          if (current) sections.push(current);
+          return sections.map(s => [s.name, s.content.join("\n").trim()]);
+        };
+        const rows = [["Раздел", "Содержание"], ...parseSections(cleaned)];
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws["!cols"] = [{ wch: 30 }, { wch: 100 }];
+        XLSX.utils.book_append_sheet(wb, ws, "Документ");
+        const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+        const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `BA_Document_${stamp}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      } catch {
+        toast({ title: "Ошибка", description: "Не удалось создать Excel", variant: "destructive" });
+      }
+      return;
+    }
   };
 
   
@@ -221,27 +349,53 @@ ${htmlBody}
 
       {/* Input Area */}
       <div className="border-t border-border bg-card px-6 py-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
           <div className="flex items-center gap-2">
             <Switch checked={publish} onCheckedChange={setPublish} />
             <span className="text-sm">Публиковать в Confluence</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="text-sm">Тип документа</span>
-            <Select value={docType} onValueChange={setDocType}>
+            <span className="text-sm">Формат файла</span>
+            <Select value={fileFormat} onValueChange={setFileFormat}>
               <SelectTrigger className="w-full md:w-auto min-w-[220px]">
-                <SelectValue placeholder="Выберите тип" />
+                <SelectValue placeholder="Выберите формат" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="brd">Бизнес-требования (BRD)</SelectItem>
-                <SelectItem value="use-case">Use Case</SelectItem>
-                <SelectItem value="user-stories">User Stories</SelectItem>
-                <SelectItem value="process">Процесс</SelectItem>
-                <SelectItem value="kpi">KPI / Метрики</SelectItem>
-                <SelectItem value="mixed">Комбинированный</SelectItem>
+                <SelectItem value="html">HTML</SelectItem>
+                <SelectItem value="docx">Word (.docx)</SelectItem>
+                <SelectItem value="pdf">PDF</SelectItem>
+                <SelectItem value="xlsx">Excel (.xlsx)</SelectItem>
               </SelectContent>
             </Select>
           </div>
+          {publish && (
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3 border border-border rounded-md p-3">
+              <div className="space-y-1">
+                <Label>Confluence Base URL</Label>
+                <Input value={confBaseUrl} onChange={(e)=>setConfBaseUrl(e.target.value)} placeholder="https://your-domain.atlassian.net/wiki" />
+              </div>
+              <div className="space-y-1">
+                <Label>Space Key</Label>
+                <Input value={confSpaceKey} onChange={(e)=>setConfSpaceKey(e.target.value)} placeholder="SPACE" />
+              </div>
+              <div className="space-y-1">
+                <Label>Parent Page ID</Label>
+                <Input value={confParentId} onChange={(e)=>setConfParentId(e.target.value)} placeholder="Optional" />
+              </div>
+              <div className="space-y-1">
+                <Label>Email</Label>
+                <Input value={confEmail} onChange={(e)=>setConfEmail(e.target.value)} placeholder="user@domain.com" />
+              </div>
+              <div className="space-y-1">
+                <Label>API Token</Label>
+                <Input value={confToken} onChange={(e)=>setConfToken(e.target.value)} placeholder="Atlassian API Token" type="password" />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label>Page Title</Label>
+                <Input value={confTitle} onChange={(e)=>setConfTitle(e.target.value)} placeholder="Заголовок страницы" />
+              </div>
+            </div>
+          )}
         </div>
         
         
