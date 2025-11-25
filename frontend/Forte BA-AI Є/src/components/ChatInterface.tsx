@@ -13,7 +13,8 @@ import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import html2pdf from "html2pdf.js";
-import { Packer, Document, Paragraph, HeadingLevel, TextRun } from "docx";
+import { Packer, Document, Paragraph, HeadingLevel, TextRun, ImageRun, Table, TableRow, TableCell, WidthType, BorderStyle, TableLayoutType } from "docx";
+import mermaid from "mermaid";
 import * as XLSX from "xlsx";
 
 interface Message {
@@ -36,10 +37,11 @@ const ChatInterface = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
   const getLastAssistantMessage = () => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant" && messages[i].content?.trim()) return messages[i].content;
-    }
-    return "";
+    const parts = messages
+      .filter(m => m.role === "assistant")
+      .map(m => String(m.content || "").trim())
+      .filter(Boolean);
+    return parts.join("\n\n");
   };
 
   const scrollToBottom = () => {
@@ -62,7 +64,7 @@ const ChatInterface = () => {
 
     try {
       if (!supabase) throw new Error("Supabase не сконфигурирован");
-      const systemInstruction = "Ты бизнес-аналитик. Всегда возвращай полноценный самодостаточный документ требований в строгом Markdown: Заголовок, Цель, Описание, Scope, Заинтересованные стороны, Бизнес-правила, Use Case, User Stories, Процесс (текстовое описание), KPI. Добавляй диаграммы: блок кода mermaid для процесса и блок кода plantuml. Возвращай только документ без лишнего текста.";
+      const systemInstruction = "Ты профессиональный бизнес-аналитик, работающий для банка. Создавай только структурированные банковские документы в Markdown. Обязательные разделы: цели процесса, роли, входы/выходы, SLA/KPI, риски и контроли. Для процессов добавляй ровно один блок Mermaid (flowchart LR), без служебных строк/версий. Используй компактные горизонтальные таблицы, избегай вертикальных таблиц; если данных мало — используй списки. Без приветствий и пояснений, только документ.";
       const apiMessages = [
         { role: "system", content: systemInstruction },
         ...messages,
@@ -72,7 +74,67 @@ const ChatInterface = () => {
         body: { messages: apiMessages, options: { publish, domain: "ba", fileFormat, confluence: { baseUrl: confBaseUrl, spaceKey: confSpaceKey, parentPageId: confParentId, email: confEmail, apiToken: confToken, title: confTitle } } }
       });
       if (error) throw error;
-      setMessages(prev => [...prev, { role: "assistant", content: data.response }]);
+      const resp = String(data.response || "");
+      let unwrapped = resp.replace(/^```(?:md|markdown)?\s*[\r\n]?([\s\S]*?)\r?\n```$/i, "$1");
+      setMessages(prev => [...prev, { role: "assistant", content: unwrapped }]);
+      const isIncomplete = (text: string) => {
+        const fences = (text.match(/```/g) || []).length;
+        if (fences % 2 !== 0) return true;
+        const m = text.match(/```\s*mermaid[\s\S]*?```/i);
+        if (!m) return true;
+        const heads = (text.match(/^#{1,6}\s+/gm) || []).length;
+        if (heads < 2) return true;
+        if (/\.\.\.$/.test(text)) return true;
+        if (/Продолж|Далее|продолж/i.test(text.slice(-40))) return true;
+        return false;
+      };
+      let attempts = 0;
+      while (isIncomplete(unwrapped) && attempts < 2) {
+        const continuation = [
+          { role: "system", content: systemInstruction },
+          ...messages,
+          { role: "user", content: userMessage },
+          { role: "assistant", content: unwrapped },
+          { role: "user", content: "Продолжи и заверши документ. Не повторяй написанное. Сохраняй банковский контекст. Используй горизонтальные таблицы, избегай вертикальных." },
+        ];
+        const { data: data2 } = await supabase.functions.invoke("ba-assistant", {
+          body: { messages: continuation, options: { publish, domain: "ba", fileFormat, confluence: { baseUrl: confBaseUrl, spaceKey: confSpaceKey, parentPageId: confParentId, email: confEmail, apiToken: confToken, title: confTitle } } }
+        });
+        const cont = String(data2?.response || "").replace(/^```(?:md|markdown)?\s*[\r\n]?([\s\S]*?)\r?\n```$/i, "$1");
+        if (cont.trim()) {
+          setMessages(prev => [...prev, { role: "assistant", content: cont }]);
+          unwrapped = unwrapped + "\n\n" + cont;
+        }
+        attempts++;
+      }
+      const looksIncomplete = (() => {
+        const fences = (unwrapped.match(/```/g) || []).length;
+        if (fences % 2 !== 0) return true;
+        const mStart = unwrapped.search(/```\s*mermaid/i);
+        if (mStart >= 0) {
+          const after = unwrapped.slice(mStart + 3);
+          if (!/```/.test(after)) return true;
+        }
+        return /\.\.\.$/.test(unwrapped) || /Продолж/i.test(unwrapped.trim().slice(-20));
+      })();
+      if (looksIncomplete) {
+        const continuation = [
+          { role: "system", content: systemInstruction },
+          ...messages,
+          { role: "user", content: userMessage },
+          { role: "assistant", content: unwrapped },
+          { role: "user", content: "Продолжи предыдущий ответ. Не повторяй уже написанное. Заверши документ." },
+        ];
+        try {
+          const { data: data2 } = await supabase.functions.invoke("ba-assistant", {
+            body: { messages: continuation, options: { publish, domain: "ba", fileFormat, confluence: { baseUrl: confBaseUrl, spaceKey: confSpaceKey, parentPageId: confParentId, email: confEmail, apiToken: confToken, title: confTitle } } }
+          });
+          const cont = String(data2?.response || "").replace(/^```(?:md|markdown)?\s*[\r\n]?([\s\S]*?)\r?\n```$/i, "$1");
+          if (cont.trim()) {
+            setMessages(prev => [...prev, { role: "assistant", content: cont }]);
+          }
+        } catch (_err) { void 0; }
+      }
       if (publish) {
         if (data?.confluence?.published && data?.confluence?.url) {
           toast({ title: "Опубликовано в Confluence", description: String(data.confluence.url) });
@@ -106,7 +168,29 @@ const ChatInterface = () => {
 
     const htmlBody = marked.parse(cleaned)
       .replace(/<pre><code class="language-mermaid">([\s\S]*?)<\/code><\/pre>/g, (_m, code) => {
-        const raw = String(code).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+        const raw = String(code).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+        if (/^\s*linechart\b/i.test(raw)) {
+          const lines = raw.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+          let title = "Линейный график";
+          const t = lines.find(l => /^title\b/i.test(l));
+          if (t) {
+            const m = t.match(/^title\s+(.+)$/i);
+            if (m) title = m[1].replace(/^"|"$/g, '');
+          }
+          const rows: { label: string; value: number }[] = [];
+          for (const l of lines) {
+            if (/^\S.*:\s*[-+]?\d+(?:[.,]\d+)?$/.test(l)) {
+              const idx = l.indexOf(":");
+              const label = l.slice(0, idx).trim();
+              const valStr = l.slice(idx + 1).trim().replace(",", ".");
+              const value = parseFloat(valStr);
+              if (!Number.isNaN(value)) rows.push({ label, value });
+            }
+          }
+          const header = `<thead><tr><th class="border border-border px-2 py-1 bg-muted text-left">${title}</th><th class="border border-border px-2 py-1 bg-muted text-right">Значение</th></tr></thead>`;
+          const body = `<tbody>${rows.map(r => `<tr><td class="border border-border px-2 py-1">${r.label}</td><td class="border border-border px-2 py-1 text-right">${r.value}</td></tr>`).join('')}</tbody>`;
+          return `<div class="mb-3"><div class="text-xs text-muted-foreground mb-2 p-2 bg-yellow-50 border border-yellow-200 rounded">Диаграмма не поддерживается. Показана таблица данных.</div><div class="overflow-x-auto"><table class="min-w-full text-sm">${header}${body}</table></div></div>`;
+        }
         return `<div class="mermaid">${raw}</div>`
       });
 
@@ -168,51 +252,120 @@ ${htmlBody}
       return;
     }
     if (fileFormat === "docx") {
-      const parseSections = (md: string) => {
+      const parseBlocks = (md: string) => {
         const lines = md.split(/\r?\n/);
-        const sections: { name: string; content: string[] }[] = [];
-        let current: { name: string; content: string[] } | null = null;
-        for (const line of lines) {
-          const m = line.match(/^\s{0,3}(#+)\s+(.*)$/);
-          if (m) {
-            if (current) sections.push(current);
-            current = { name: m[2].trim(), content: [] };
-          } else {
-            if (!current) current = { name: "Документ", content: [] };
-            current.content.push(line);
+        const blocks: { type: "heading" | "paragraph" | "mermaid" | "table"; level?: number; text?: string; code?: string; rows?: string[][] }[] = [];
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i];
+          const hm = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/);
+          if (hm) {
+            blocks.push({ type: "heading", level: hm[1].length, text: hm[2].trim() });
+            i++; continue;
+          }
+          if (/^```\s*mermaid\s*$/i.test(line)) {
+            let j = i + 1; const buf: string[] = [];
+            while (j < lines.length && !/^```\s*$/.test(lines[j])) { buf.push(lines[j]); j++; }
+            blocks.push({ type: "mermaid", code: buf.join("\n") });
+            i = j + 1; continue;
+          }
+          if (/^\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\|?\s*:?-{3,}\s*(\|\s*:?-{3,}\s*)+\|?$/.test(lines[i + 1])) {
+            const tbl: string[] = [];
+            tbl.push(line);
+            i++;
+            while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) { tbl.push(lines[i]); i++; }
+            const rawRows = tbl.map(r => r.replace(/^\|/, "").replace(/\|$/, "").split(/\|/).map(c => c.trim()));
+            const rows = [rawRows[0], ...rawRows.slice(2)];
+            blocks.push({ type: "table", rows });
+            continue;
+          }
+          if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) {
+            const ordered = /^\s*\d+\.\s+/.test(line);
+            const items: string[] = [];
+            while (i < lines.length && ((ordered && /^\s*\d+\.\s+/.test(lines[i])) || (!ordered && /^\s*[-*+]\s+/.test(lines[i])))) {
+              items.push(lines[i].replace(/^\s*[-*+\d.]+\s+/, "").trim());
+              i++;
+            }
+            blocks.push({ type: "list", items, ordered });
+            continue;
+          }
+          const para: string[] = [];
+          while (i < lines.length && lines[i].trim() !== "") { para.push(lines[i]); i++; }
+          if (para.length) blocks.push({ type: "paragraph", text: para.join("\n") });
+          while (i < lines.length && lines[i].trim() === "") i++;
+        }
+        return blocks;
+      };
+      const renderMermaidPng = async (code: string): Promise<{ data: Uint8Array; width: number; height: number }> => {
+        mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
+        const id = "m_docx_" + Math.random().toString(36).slice(2);
+        const res = await mermaid.render(id, code) as unknown as { svg?: string } | string;
+        const svg: string = typeof res === "string" ? res : String(res.svg || "");
+        const vb = svg.match(/viewBox="(\d+\s+\d+\s+\d+\s+\d+)"/);
+        let w = 800, h = 400;
+        if (vb) {
+          const parts = vb[1].split(/\s+/).map(Number); h = parts[3]; w = parts[2];
+        }
+        const img = new Image();
+        const url = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+        await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(); img.src = url; });
+        const canvas = document.createElement("canvas");
+        const maxW = 720; const scale = Math.min(1, maxW / w);
+        canvas.width = Math.round(w * scale); canvas.height = Math.round(h * scale);
+        const ctx = canvas.getContext("2d");
+        if (!ctx) throw new Error("noctx");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const blob: Blob = await new Promise((resolve) => canvas.toBlob(b => resolve((b as Blob) || new Blob()), "image/png", 0.92));
+        const ab = await blob.arrayBuffer();
+        return { data: new Uint8Array(ab), width: canvas.width, height: canvas.height };
+      };
+      (async () => {
+        const blocks = parseBlocks(cleaned);
+        const children: (Paragraph | Table)[] = [];
+        for (const b of blocks) {
+          if (b.type === "heading") {
+            const lvl = b.level || 2;
+            const heading = lvl === 1 ? HeadingLevel.HEADING_1 : lvl === 2 ? HeadingLevel.HEADING_2 : HeadingLevel.HEADING_3;
+            children.push(new Paragraph({ text: String(b.text || ""), heading }));
+          } else if (b.type === "paragraph") {
+            children.push(new Paragraph({ children: [new TextRun({ text: String(b.text || ""), size: 26 })] }));
+          } else if (b.type === "table" && b.rows) {
+            const rows = b.rows.map((r, idx) => new TableRow({ children: r.map(cell => new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: cell, bold: idx === 0, size: idx === 0 ? 26 : 24 })] })] , margins: { top: 160, bottom: 160, left: 200, right: 200 } })) }));
+            const colCount = Math.max(1, b.rows[0]?.length || 1);
+            const usable = 9000;
+            const base = Math.max(1800, Math.floor(usable / colCount));
+            const colWidths = Array(colCount).fill(base);
+            children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, columnWidths: colWidths, layout: TableLayoutType.FIXED, rows, borders: { top: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" }, bottom: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" }, left: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" }, right: { style: BorderStyle.SINGLE, size: 6, color: "CCCCCC" }, insideH: { style: BorderStyle.SINGLE, size: 4, color: "DDDDDD" }, insideV: { style: BorderStyle.SINGLE, size: 4, color: "DDDDDD" } } }));
+          } else if (b.type === "list" && b.items) {
+            b.items.forEach((t, idx) => {
+              const marker = (b as { ordered?: boolean }).ordered ? `${idx + 1}. ` : "• ";
+              children.push(new Paragraph({ children: [new TextRun({ text: marker + t, size: 24 })] }));
+            });
+          } else if (b.type === "mermaid" && b.code) {
+            try {
+              const img = await renderMermaidPng(b.code);
+              const wTarget = Math.min(720, img.width);
+              const hTarget = Math.round(wTarget * (img.height / img.width));
+              children.push(new Paragraph({ children: [new ImageRun({ data: img.data, transformation: { width: wTarget, height: hTarget } })] }));
+            } catch {
+              children.push(new Paragraph({ children: [new TextRun({ text: String(b.code || "") })] }));
+            }
           }
         }
-        if (current) sections.push(current);
-        return sections.map(s => [s.name, s.content.join("\n").trim()]);
-      };
-      const sections = parseSections(cleaned);
-      const doc = new Document({
-        sections: [
-          {
-            properties: {},
-            children: sections.flatMap(([title, body]) => {
-              const paras: Paragraph[] = [];
-              paras.push(new Paragraph({ text: String(title), heading: HeadingLevel.HEADING_2 }));
-              body.split(/\n\n+/).forEach(block => {
-                paras.push(new Paragraph({ children: [new TextRun({ text: block })] }));
-              });
-              return paras;
-            }),
-          },
-        ],
-      });
-      Packer.toBlob(doc).then(blob => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `BA_Document_${stamp}.docx`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-      }).catch(() => {
-        toast({ title: "Ошибка", description: "Не удалось создать DOCX", variant: "destructive" });
-      });
+        const doc = new Document({ sections: [{ properties: { page: { margin: { top: 1440, bottom: 1440, left: 1440, right: 1440 } } }, children }] });
+        Packer.toBlob(doc).then(blob => {
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = `BA_Document_${stamp}.docx`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        }).catch(() => {
+          toast({ title: "Ошибка", description: "Не удалось создать DOCX", variant: "destructive" });
+        });
+      })();
       return;
     }
     if (fileFormat === "pdf") {
@@ -224,7 +377,7 @@ ${htmlBody}
       document.body.appendChild(container);
       const renderMermaid = async () => {
         try {
-          const w: any = window as any;
+          const w = window as unknown as { mermaid?: typeof mermaid };
           if (w.mermaid) {
             w.mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
             const blocks = container.querySelectorAll('.mermaid');
@@ -232,8 +385,8 @@ ${htmlBody}
             for (const el of Array.from(blocks)) {
               const code = (el.textContent || '') as string;
               try {
-                const res = await w.mermaid.render('pdf_m' + (idx++), code);
-                const out = (res as any).svg || res;
+                const res = await w.mermaid.render('pdf_m' + (idx++), code) as unknown as { svg?: string } | string;
+                const out = typeof res === 'string' ? res : res.svg || '';
                 if (typeof out === 'string' && out.includes('Syntax error in text')) {
                   (el as HTMLElement).outerHTML = '<pre>' + code.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
                 } else {
@@ -244,11 +397,12 @@ ${htmlBody}
               }
             }
           }
-        } catch {}
+        } catch (_e) { const _ = 0; }
       };
       renderMermaid().then(() => {
         try {
-          (html2pdf as any)().from(container).set({ margin: 10, filename: `BA_Document_${stamp}.pdf`, html2canvas: { scale: 2 } }).save();
+          const pdfGen = (html2pdf as unknown as { (): { from: (el: Element) => { set: (opts: { margin: number; filename: string; html2canvas: { scale: number } }) => { save: () => void } } } });
+          pdfGen().from(container).set({ margin: 10, filename: `BA_Document_${stamp}.pdf`, html2canvas: { scale: 2 } }).save();
         } catch (e) {
           toast({ title: "Ошибка", description: "Не удалось создать PDF", variant: "destructive" });
         } finally {
@@ -259,32 +413,42 @@ ${htmlBody}
     }
     if (fileFormat === "xlsx") {
       try {
-        const parseSections = (md: string) => {
+        const parseTables = (md: string) => {
           const lines = md.split(/\r?\n/);
-          const sections: { name: string; content: string[] }[] = [];
-          let current: { name: string; content: string[] } | null = null;
-          for (const line of lines) {
-            const m = line.match(/^\s{0,3}(#+)\s+(.*)$/);
-            if (m) {
-              if (current) sections.push(current);
-              current = { name: m[2].trim(), content: [] };
-            } else {
-              if (!current) current = { name: "Документ", content: [] };
-              current.content.push(line);
+          const tables: string[][][] = [];
+          let i = 0;
+          while (i < lines.length) {
+            const line = lines[i];
+            if (/^\|.*\|\s*$/.test(line) && i + 1 < lines.length && /^\|?\s*:?-{3,}\s*(\|\s*:?-{3,}\s*)+\|?$/.test(lines[i + 1])) {
+              const tbl: string[] = [];
+              tbl.push(line);
+              i++;
+              while (i < lines.length && /^\|.*\|\s*$/.test(lines[i])) { tbl.push(lines[i]); i++; }
+              const rows = tbl.map(r => r.replace(/^\|/, '').replace(/\|$/, '').split(/\|/).map(c => c.trim()));
+              const cleanRows = [rows[0], ...rows.slice(2)];
+              tables.push(cleanRows);
+              continue;
             }
+            i++;
           }
-          if (current) sections.push(current);
-          return sections.map(s => [s.name, s.content.join("\n").trim()]);
+          return tables;
         };
-        const rows = [["Раздел", "Содержание"], ...parseSections(cleaned)];
+        const tables = parseTables(cleaned);
         const wb = XLSX.utils.book_new();
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-        ws["!cols"] = [{ wch: 30 }, { wch: 100 }];
-        XLSX.utils.book_append_sheet(wb, ws, "Документ");
-        const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
-        const blob = new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+        if (tables.length === 0) {
+          const ws = XLSX.utils.aoa_to_sheet([["Нет таблиц в документе"]]);
+          XLSX.utils.book_append_sheet(wb, ws, "Таблицы");
+        } else {
+          tables.forEach((t, idx) => {
+            const ws = XLSX.utils.aoa_to_sheet(t);
+            ws["!cols"] = t[0]?.map(() => ({ wch: 30 })) || [{ wch: 30 }];
+            XLSX.utils.book_append_sheet(wb, ws, `Таблица ${idx + 1}`);
+          });
+        }
+        const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+        const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
+        const a = document.createElement('a');
         a.href = url;
         a.download = `BA_Document_${stamp}.xlsx`;
         document.body.appendChild(a);
@@ -301,7 +465,10 @@ ${htmlBody}
   
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && e.ctrlKey) {
+    if (e.key === "Enter") {
+      if (e.shiftKey) {
+        return;
+      }
       e.preventDefault();
       handleSend();
     }
@@ -399,20 +566,20 @@ ${htmlBody}
         </div>
         
         
-        <div className="flex gap-3 items-end">
+        <div className="flex flex-wrap gap-3 items-end">
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Опишите вашу задачу или вопрос..."
-            className="min-h-[60px] max-h-[200px] resize-none"
+            className="min-h-[60px] max-h-[200px] resize-none w-full flex-1"
             disabled={isLoading}
           />
           <Button
             onClick={handleSend}
             disabled={!input.trim() || isLoading}
             size="icon"
-            className="h-[60px] w-[60px] shrink-0 shadow-lg hover:shadow-glow transition-all"
+            className="md:h-[60px] md:w-[60px] h-10 w-10 shrink-0 shadow-lg hover:shadow-glow transition-all"
           >
             <Send className="h-5 w-5" />
           </Button>
@@ -421,7 +588,7 @@ ${htmlBody}
             disabled={isLoading}
             size="icon"
             variant="outline"
-            className="h-[60px] w-[60px] shrink-0"
+            className="md:h-[60px] md:w-[60px] h-10 w-10 shrink-0"
           >
             <Download className="h-5 w-5" />
           </Button>

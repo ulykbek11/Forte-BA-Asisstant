@@ -34,7 +34,7 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
       
       <div
         className={cn(
-          "max-w-[70%] rounded-2xl px-5 py-3 shadow-md transition-all",
+          "max-w-full sm:max-w-[85%] md:max-w-[70%] rounded-2xl px-4 py-3 shadow-md transition-all",
           isUser
             ? "bg-primary text-primary-foreground"
             : "bg-card border border-border"
@@ -72,7 +72,24 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
                 code: ({inline, className, children, ...props}) => {
                   const code = String(children || "");
                   if (!inline && /language-mermaid/.test(className || "")) {
+                    if (/^\s*linechart\b/i.test(code)) {
+                      return <MermaidLinechartFallback code={code} />;
+                    }
                     return <MermaidBlock code={code} />;
+                  }
+                  if (!inline) {
+                    const m = /language-(\w+)/.exec(className || "");
+                    const lang = (m?.[1] || "").toLowerCase();
+                    const looksMarkdown = !lang || lang === "md" || lang === "markdown" || /(^|\n)#{1,6}\s/.test(code) || /(^|\n)\|.*\|/.test(code);
+                    if (looksMarkdown) {
+                      return (
+                        <div className="my-2">
+                          <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}> 
+                            {code}
+                          </ReactMarkdown>
+                        </div>
+                      );
+                    }
                   }
                   return inline ? (
                     <code className={cn("px-1 py-0.5 rounded bg-muted text-foreground", className)} {...props}>{children}</code>
@@ -111,20 +128,165 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
 export default ChatMessage;
 const MermaidBlock = ({ code }: { code: string }) => {
   const [svg, setSvg] = useState("");
+  const [error, setError] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+  
   useEffect(() => {
-    mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });
-    const id = "mermaid-" + Math.random().toString(36).slice(2);
-    mermaid
-      .render(id, code)
-      .then((res: any) => {
+    const renderDiagram = async () => {
+      try {
+        // Инициализируем mermaid с настройками для лучшей совместимости
+        mermaid.initialize({ 
+          startOnLoad: false, 
+          securityLevel: "loose",
+          theme: 'default',
+          flowchart: {
+            useMaxWidth: true,
+            htmlLabels: true,
+            curve: 'basis'
+          },
+          // Добавляем настройки для совместимости с версией 11.12.1
+          fontFamily: 'monospace',
+          fontSize: '14px'
+        });
+        
+        const id = "mermaid-" + Math.random().toString(36).slice(2);
+        const trimmedCode = code
+          .split(/\r?\n/)
+          .filter(l => !/mermaid\s+version/i.test(l))
+          .join("\n")
+          .trim();
+        
+        // Проверяем базовый синтаксис mermaid
+        if (!trimmedCode || trimmedCode.length < 5) {
+          throw new Error("Пустая или слишком короткая диаграмма");
+        }
+        
+        // Проверяем наличие ключевых слов для различных типов диаграмм
+        const validDiagramTypes = ['flowchart', 'sequence', 'class', 'state', 'er', 'journey', 'gantt', 'pie'];
+        const hasValidType = validDiagramTypes.some(type => trimmedCode.toLowerCase().startsWith(type));
+        
+        if (!hasValidType && !trimmedCode.toLowerCase().includes('graph')) {
+          // Если это не распознанный тип, пробуем использовать flowchart по умолчанию
+          const fallbackCode = `flowchart LR\n  A[${trimmedCode}] --> B[Конец]`;
+          const res = await mermaid.render(id, fallbackCode);
+          const out = res.svg || res;
+          
+          if (typeof out === "string" && (out.includes("Syntax error") || out.includes("Parse error"))) {
+            throw new Error("Ошибка синтаксиса диаграммы");
+          }
+          
+          setSvg(out);
+          setError(false);
+          setErrorMessage("");
+          return;
+        }
+        
+        const res = await mermaid.render(id, trimmedCode);
         const out = res.svg || res;
-        if (typeof out === "string" && out.includes("Syntax error in text")) {
-          setSvg(`<pre class="overflow-x-auto p-3 rounded bg-muted">${code}</pre>`);
+        
+        // Проверяем на ошибки синтаксиса
+        if (typeof out === "string" && (out.includes("Syntax error in text") || out.includes("Parse error"))) {
+          setError(true);
+          setErrorMessage("Ошибка синтаксиса Mermaid диаграммы");
+          setSvg(`<pre class="overflow-x-auto p-3 rounded bg-muted text-sm">${code.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`);
         } else {
           setSvg(out);
+          setError(false);
+          setErrorMessage("");
         }
-      })
-      .catch(() => setSvg(`<pre class="overflow-x-auto p-3 rounded bg-muted">${code}</pre>`));
+      } catch (err) {
+        console.error("Mermaid rendering error:", err);
+        setError(true);
+        setErrorMessage(`Ошибка рендеринга: ${err instanceof Error ? err.message : 'Неизвестная ошибка'}`);
+        setSvg(`<pre class="overflow-x-auto p-3 rounded bg-muted text-sm">${code.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`);
+      }
+    };
+    
+    renderDiagram();
   }, [code]);
-  return <div className="overflow-x-auto" dangerouslySetInnerHTML={{ __html: svg }} />;
+  
+  return (
+    <div className="my-4">
+      {error && (
+        <div className="text-xs text-muted-foreground mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
+          ⚠️ {errorMessage || "Диаграмма не может быть отображена. Показан исходный код."}
+        </div>
+      )}
+      <div className="overflow-x-auto border border-border rounded-lg p-4 bg-background" dangerouslySetInnerHTML={{ __html: svg }} />
+    </div>
+  );
+};
+
+const MermaidLinechartFallback = ({ code }: { code: string }) => {
+  const [rows, setRows] = useState<{ label: string; value: number }[]>([]);
+  const [title, setTitle] = useState<string>("Линейный график");
+  const [error, setError] = useState<string>("");
+  
+  useEffect(() => {
+    try {
+      const lines = String(code).split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      const t = lines.find(l => /^title\b/i.test(l));
+      if (t) {
+        const m = t.match(/^title\s+(.+)$/i);
+        if (m) setTitle(m[1].replace(/^"|"$/g, ''));
+      }
+      const data: { label: string; value: number }[] = [];
+      for (const l of lines) {
+        if (/^\S.*:\s*[-+]?\d+(?:[.,]\d+)?$/.test(l)) {
+          const idx = l.indexOf(":");
+          const label = l.slice(0, idx).trim();
+          const valStr = l.slice(idx + 1).trim().replace(",", ".");
+          const value = parseFloat(valStr);
+          if (!Number.isNaN(value)) data.push({ label, value });
+        }
+      }
+      if (data.length === 0) {
+        setError("Нет данных для отображения");
+      } else {
+        setRows(data);
+        setError("");
+      }
+    } catch (err) {
+      console.error("Error parsing linechart data:", err);
+      setError("Ошибка при разборе данных графика");
+      setRows([]);
+    }
+  }, [code]);
+  
+  if (error) {
+    return (
+      <div className="my-4">
+        <div className="text-xs text-muted-foreground mb-2 p-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded">
+          ⚠️ {error}
+        </div>
+        <pre className="overflow-x-auto p-3 rounded bg-muted text-sm">{code}</pre>
+      </div>
+    );
+  }
+  
+  return (
+    <div className="my-4">
+      <div className="text-xs text-muted-foreground mb-2 p-2 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded">
+        Диаграмма не поддерживается. Показана таблица данных.
+      </div>
+      <div className="overflow-x-auto">
+        <table className="min-w-full text-sm">
+          <thead>
+            <tr>
+              <th className="border border-border px-2 py-1 bg-muted text-left">{title}</th>
+              <th className="border border-border px-2 py-1 bg-muted text-right">Значение</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td className="border border-border px-2 py-1">{r.label}</td>
+                <td className="border border-border px-2 py-1 text-right">{r.value}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 };
