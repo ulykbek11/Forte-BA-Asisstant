@@ -11,9 +11,10 @@ interface ChatMessageProps {
   role: "user" | "assistant";
   content: string;
   isThinking?: boolean;
+  attachments?: { type: "docx" | "pdf" | "html" | "xlsx"; name: string; url: string }[];
 }
 
-const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
+const ChatMessage = ({ role, content, isThinking, attachments }: ChatMessageProps) => {
   const isUser = role === "user";
 
   return (
@@ -112,6 +113,15 @@ const ChatMessage = ({ role, content, isThinking }: ChatMessageProps) => {
             >
               {content}
             </ReactMarkdown>
+            {!isUser && Array.isArray(attachments) && attachments.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {attachments.map((a, i) => (
+                  <a key={i} href={a.url} download={a.name} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-muted" target="_blank" rel="noopener noreferrer">
+                    {a.type.toUpperCase()} · {a.name}
+                  </a>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -150,11 +160,15 @@ const MermaidBlock = ({ code }: { code: string }) => {
         });
         
         const id = "mermaid-" + Math.random().toString(36).slice(2);
-        const trimmedCode = code
+        const trimmedCode0 = code
           .split(/\r?\n/)
-          .filter(l => !/mermaid\s+version/i.test(l))
+          .filter(l => !/^\s*mermaid\s+version\b/i.test(l))
           .join("\n")
           .trim();
+        let trimmedCode = trimmedCode0;
+        if (/^\s*pie\b/i.test(trimmedCode)) {
+          trimmedCode = trimmedCode.replace(/:\s*(-?\d+(?:[.,]\d+)?)\s*%/g, (_m, num) => `: ${String(num).replace(/,/g, '.')}`);
+        }
         
         // Проверяем базовый синтаксис mermaid
         if (!trimmedCode || trimmedCode.length < 5) {
