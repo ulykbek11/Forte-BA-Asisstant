@@ -164,6 +164,7 @@ const MermaidBlock = ({ code }: { code: string }) => {
           .split(/\r?\n/)
           .filter(l => !/^\s*mermaid\s+version\b/i.test(l))
           .join("\n")
+          .replace(/\bmermaid\s+version\b.*$/gmi, "")
           .trim();
         let trimmedCode = trimmedCode0;
         if (/^\s*pie\b/i.test(trimmedCode)) {

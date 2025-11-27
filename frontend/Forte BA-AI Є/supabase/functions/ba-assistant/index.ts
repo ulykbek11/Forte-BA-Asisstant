@@ -20,6 +20,7 @@ const SYSTEM_PROMPT = `Ты — Forte BA Assistant, опытный бизнес-
 - Структурируй информацию четко и последовательно
 - Используй профессиональную терминологию бизнес-анализа
 - Предлагай конкретные решения и рекомендации
+- Всегда сохраняй банковский контекст. Игнорируй бытовые и несвязанные темы; при их наличии перефразируй запрос и приведи банковский эквивалент либо вежливо попроси уточнить банковские детали.
 
 Форматы документов, которые ты можешь создавать:
 1. Бизнес-требования (цель, описание, scope, бизнес-правила, KPI)
@@ -29,6 +30,12 @@ const SYSTEM_PROMPT = `Ты — Forte BA Assistant, опытный бизнес-
 5. Лидирующие индикаторы и метрики
 
 Отвечай на русском языке, будь профессиональным и конструктивным.`
+
+const SYSTEM_CHAT_PROMPT = `Ты — Forte BA Assistant, профессиональный бизнес-аналитик в банковском контексте.
+
+Отвечай кратко и по делу. Не создавай Markdown‑документы, заголовки, таблицы, блоки кода и диаграммы, если это прямо не попросили. Давай ответ в одном‑двух абзацах.
+
+Всегда сохраняй банковскую тематику и терминологию.`
 
 function escapeHtml(s: string) {
   return s.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
@@ -41,6 +48,7 @@ serve(async (req) => {
 
   try {
     const { messages, options } = await req.json()
+    const isChat = String(options?.mode || "").toLowerCase() === "chat"
     const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY")
 
     if (!LOVABLE_API_KEY) {
@@ -48,20 +56,29 @@ serve(async (req) => {
     }
 
     const typePrompt = (() => {
+      if (isChat) return "";
       switch (options?.docType) {
         case "brd":
-          return "Сформируй полный документ бизнес-требований (BRD) в Markdown: обязательно включи Заголовок, Цель, Описание, Scope, Заинтересованные стороны, Бизнес-правила, Нефункциональные требования, Ограничения, Риски, KPI. Используй таблицы для структурирования данных. Добавь одну mermaid-диаграмму процесса (flowchart LR). Возвращай только документ.";
+          return "Сформируй полный документ бизнес-требований (BRD) в Markdown: обязательно включи Заголовок, Цель, Описание, Scope, Заинтересованные стороны, Бизнес-правила, Нефункциональные требования, Ограничения, Риски, KPI. Используй таблицы. Добавь одну mermaid-диаграмму банковского процесса (flowchart LR). Возвращай только документ.";
         case "use-case":
-          return "Сформируй Use Case документ: акторы, варианты использования, детальные сценарии (основной/альтернативные потоки), предусловия/постусловия, исключения. Используй таблицы для сценариев. Добавь одну mermaid-диаграмму основного потока (flowchart LR). Возвращай только документ.";
+          return "Сформируй Use Case документ: акторы, варианты использования, детальные сценарии (основной/альтернативные потоки), предусловия/постусловия, исключения. Используй таблицы для сценариев. Добавь одну mermaid-диаграмму основного потока банковской функции (flowchart LR). Возвращай только документ.";
         case "user-stories":
-          return "Сформируй EPIC и набор User Stories в табличном формате. Для каждой Story обязательно добавь критерии приемки (GWT), приоритет и допущения. Используй Markdown таблицы. Возвращай только документ.";
+          return "Сформируй EPIC и набор User Stories в табличном формате. Для каждой Story обязательно добавь критерии приемки (GWT), приоритет и допущения. Используй Markdown таблицы. Возвращай только документ в банковском контексте.";
         case "process":
-          return "Сформируй документ описания процесса: назначение, границы, роли, входы/выходы, подробные шаги процесса, бизнес-правила. Обязательно добавь одну mermaid-диаграмму процесса (flowchart LR — слева направо горизонтально). Используй списки и таблицы. Возвращай только документ.";
+          return "Сформируй документ описания банковского процесса: назначение, границы, роли, входы/выходы, подробные шаги процесса, бизнес-правила. Обязательно добавь одну mermaid-диаграмму процесса (flowchart LR). Используй списки и таблицы. Возвращай только документ.";
         case "kpi":
-          return "Сформируй документ KPI/метрик: цели, карта метрик в табличном формате (определение, формула, периодичность, источники данных), пороги/алерты, визуализация. Используй Markdown таблицы. Возвращай только документ.";
+          return "Сформируй документ KPI/метрик для банковского продукта/процесса: цели, карта метрик в табличном формате (определение, формула, периодичность, источники данных), пороги/алерты, визуализация. Используй Markdown таблицы. Возвращай только документ.";
         default:
-          return "Сформируй полный комбинированный документ: ключевые разделы BRD, 2–3 Use Case в таблицах, 3–5 User Stories с критериями приемки, подробные шаги процесса (текст), KPI в таблице. Добавь одну mermaid-диаграмму процесса (flowchart LR). Используй Markdown форматирование. Возвращай только документ.";
+          return "Сформируй полный комбинированный документ в банковском контексте: ключевые разделы BRD, 2–3 Use Case в таблицах, 3–5 User Stories с критериями приемки, подробные шаги процесса (текст), KPI в таблице. Добавь одну mermaid-диаграмму банковского процесса (flowchart LR). Используй Markdown форматирование. Возвращай только документ.";
       }
+    })()
+
+    const domainPrompt = (() => {
+      const d = String(options?.domain || "").toLowerCase();
+      if (d === "ba" || d === "bank" || d === "banking") {
+        return "Всегда сохраняй банковскую тематику. Запрещено генерировать бытовые, кулинарные, развлекательные или иные несвязанные процессы. При отсутствии контекста — запроси банковские детали (продукт, процесс, система, роли).";
+      }
+      return "";
     })()
 
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -73,11 +90,11 @@ serve(async (req) => {
       body: JSON.stringify({
         model: "google/gemini-2.5-flash",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT + "\n\n" + typePrompt + " Возвращай только документ без лишнего текста." },
+          { role: "system", content: (isChat ? SYSTEM_CHAT_PROMPT : SYSTEM_PROMPT + "\n\n" + typePrompt) + (domainPrompt ? ("\n\n" + domainPrompt) : "") + (isChat ? "" : " Возвращай только документ без лишнего текста.") },
           ...(Array.isArray(messages) ? messages : []),
         ],
-        temperature: 0.1,
-        max_tokens: 8000,
+        temperature: isChat ? 0.3 : 0.1,
+        max_tokens: isChat ? 2000 : 8000,
       }),
     })
 
@@ -95,9 +112,7 @@ serve(async (req) => {
     const data = await response.json()
     let assistantMessage = data.choices?.[0]?.message?.content ?? ""
     
-    // Проверка полноты ответа - если ответ слишком короткий, добавляем недостающие разделы
-    if (assistantMessage.length < 500) {
-      // Добавляем недостающие базовые разделы
+    if (!isChat && assistantMessage.length < 500) {
       const sections = []
       if (!assistantMessage.includes("## ")) {
         sections.push("## Основные положения\n\n[Содержание документа...]\n")
@@ -110,22 +125,48 @@ serve(async (req) => {
       }
     }
     
-    // Добавляем стандартную диаграмму только если нет ни одной диаграммы
-    if (!/```mermaid[\s\S]*?```/i.test(assistantMessage) && !/```plantuml[\s\S]*?```/i.test(assistantMessage)) {
-      // Контекстуализированная диаграмма на основе типа документа
-      let diagramContext = "Общий бизнес-процесс"
-      if (options?.docType === "brd") diagramContext = "Процесс сбора требований"
-      else if (options?.docType === "use-case") diagramContext = "Процесс выполнения Use Case"
-      else if (options?.docType === "user-stories") diagramContext = "Проесс разработки по User Stories"
-      else if (options?.docType === "process") diagramContext = "Основной бизнес-процесс"
-      else if (options?.docType === "kpi") diagramContext = "Проесс сбора и анализа метрик"
+    if (!isChat && !/```mermaid[\s\S]*?```/i.test(assistantMessage) && !/```plantuml[\s\S]*?```/i.test(assistantMessage)) {
+      let diagramContext = "Основной банковский процесс"
+      if (options?.docType === "brd") diagramContext = "Сбор и согласование требований банковского продукта"
+      else if (options?.docType === "use-case") diagramContext = "Основной поток банковской функции"
+      else if (options?.docType === "user-stories") diagramContext = "Разработка фичи банковского сервиса"
+      else if (options?.docType === "process") diagramContext = "Ключевой банковский процесс"
+      else if (options?.docType === "kpi") diagramContext = "Сбор и анализ банковских метрик"
       
       assistantMessage += `\n\n\n## Диаграмма процесса: ${diagramContext}\n\n\`\`\`mermaid\nflowchart LR\n  Start([Начало]) --> Input[Ввод данных]\n  Input --> Validate{Валидация}\n  Validate -- Успешно --> Process[Обработка]\n  Validate -- Ошибка --> Error[Обработка ошибки]\n  Process --> Result[Результат]\n  Error --> Result\n  Result --> End([Завершение])\n\`\`\``
     }
 
+    const enforceBankDomain = () => {
+      const s = assistantMessage.toLowerCase()
+      const hasBank = /(банк|кредит|счет|счёт|платеж|платёж|карта|транзакц|депозит|вклад|ипотек|swift|iban|pos|эквайр|перевод|касс|инкасс|скоринг|лимит|комисси|контрагент|клиент|договор|заявка|aml|kyc)/i.test(s)
+      const hasOff = /(яичниц|яйц|кулинар|рецепт|сковород|жарка|готовк|лук|масл|повар|еда|кухн|пицц|бургер|чай|кофе)/i.test(s)
+      const d = String(options?.domain || "").toLowerCase()
+      return (d === "ba" || d === "bank" || d === "banking") && (!hasBank || hasOff)
+    }
+
+    if (!isChat && enforceBankDomain()) {
+      const response2 = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${LOVABLE_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "google/gemini-2.5-flash",
+          messages: [
+            { role: "system", content: SYSTEM_PROMPT + "\n\n" + typePrompt + "\n\nСтрого банковская тематика. Перепиши документ в банковском контексте, заменив любые бытовые примеры на банковские." },
+            ...(Array.isArray(messages) ? messages : []),
+          ],
+          temperature: 0.1,
+          max_tokens: 8000,
+        }),
+      })
+      if (response2.ok) {
+        const data2 = await response2.json()
+        assistantMessage = data2.choices?.[0]?.message?.content ?? assistantMessage
+      }
+    }
+
     let confluence: { published: boolean; url?: string; pageId?: string; error?: string } | undefined
 
-    if (options?.publish) {
+    if (!isChat && options?.publish) {
       const CONFLUENCE_BASE_URL = options?.confluence?.baseUrl || Deno.env.get("CONFLUENCE_BASE_URL")
       const CONFLUENCE_EMAIL = options?.confluence?.email || Deno.env.get("CONFLUENCE_EMAIL")
       const CONFLUENCE_API_TOKEN = options?.confluence?.apiToken || Deno.env.get("CONFLUENCE_API_TOKEN")

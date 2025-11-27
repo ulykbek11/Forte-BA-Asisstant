@@ -67,8 +67,8 @@ const ChatInterface = () => {
       for (let i = idx + 1; i < lines.length; i++) {
         const l = lines[i];
         if (/^\s*#{1,6}\s+/.test(l)) break;
-        if (/^\s*[-*+]\s+/.test(l)) out.push(l.replace(/^\s*[-*+]\s+/, "").trim());
-        else if (/^\s*\d+\.\s+/.test(l)) out.push(l.replace(/^\s*\d+\.\s+/, "").trim());
+        if (/^\s*[-*+]\s+/.test(l) || /^\s*•\s+/.test(l)) out.push(l.replace(/^\s*([-*+]|•)\s+/, "").trim());
+        else if (/^\s*\d+[.)]\s+/.test(l)) out.push(l.replace(/^\s*\d+[.)]\s+/, "").trim());
         else if (l.trim() && !/^```/.test(l)) out.push(l.trim());
       }
       return out.filter(Boolean);
@@ -79,19 +79,69 @@ const ChatInterface = () => {
         if (key.test(l)) {
           const m = l.split(":");
           if (m.length > 1) out.push(m.slice(1).join(":").trim());
+          else out.push(l.trim());
         }
       }
       return out.filter(Boolean);
     };
-    const goals = pickSection([/^\s*#{1,6}\s+цели\b/i, /^\s*цели\s*:/i]).concat(pickInline(/\bцели\s*:/i));
-    const roles = pickSection([/^\s*#{1,6}\s+роли\b/i, /^\s*#{1,6}\s+акторы\b/i, /^\s*роли\s*:/i, /^\s*акторы\s*:/i]).concat(pickInline(/\b(роли|акторы)\s*:/i));
-    const inputs = pickSection([/^\s*#{1,6}\s+входы\b/i, /^\s*входы\s*:/i]).concat(pickInline(/\bвходы\s*:/i));
-    const outputs = pickSection([/^\s*#{1,6}\s+выходы\b/i, /^\s*выходы\s*:/i]).concat(pickInline(/\bвыходы\s*:/i));
-    const sla = pickSection([/^\s*#{1,6}\s+sla\b/i, /^\s*sla\s*:/i]).concat(pickInline(/\bsla\s*:/i));
-    const kpi = pickSection([/^\s*#{1,6}\s+kpi\b/i, /^\s*kpi\s*:/i, /^\s*метрики\s*:/i, /^\s*показатели\s*:/i]).concat(pickInline(/\b(kpi|метрики|показатели)\s*:/i));
-    const risks = pickSection([/^\s*#{1,6}\s+риски\b/i, /^\s*риски\s*:/i]).concat(pickInline(/\bриски\s*:/i));
-    const controls = pickSection([/^\s*#{1,6}\s+контроли\b/i, /^\s*контроли\s*:/i, /^\s*контрмеры\s*:/i]).concat(pickInline(/\b(контроли|контрмеры)\s*:/i));
-    const assumptions = pickSection([/^\s*#{1,6}\s+допущения\b/i, /^\s*допущения\s*:/i]).concat(pickInline(/\bдопущения\s*:/i));
+    const hasWord = (l: string, keys: RegExp[]) => keys.some(r => r.test(l));
+    const collectByWords = (keys: RegExp[]) => {
+      const out: string[] = [];
+      for (const l of lines) {
+        const s = l.trim();
+        if (!s || /^```/.test(s)) continue;
+        if (hasWord(s, keys)) {
+          const m = s.split(/[:–—-]/);
+          if (m.length > 1) out.push(m.slice(1).join(":").trim()); else out.push(s);
+        }
+      }
+      return out.filter(Boolean);
+    };
+    const goals = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+цели\b/i, /^\s*цели\s*:/i, /^\s*назначение\b/i]),
+      ...pickInline(/\b(цели|цель|назначение)\s*:/i),
+      ...collectByWords([/\bцели\b/i, /\bцель\b/i, /\bназначение\b/i, /\bobjective\b/i, /\bpurpose\b/i])
+    ]));
+    const roles = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+роли\b/i, /^\s*#{1,6}\s+акторы\b/i, /^\s*роли\s*:/i, /^\s*акторы\s*:/i]),
+      ...pickInline(/\b(роли|акторы|ответственн\w+)\s*:/i),
+      ...collectByWords([/\bроли\b/i, /\bроль\b/i, /\bакторы\b/i, /\bучастники\b/i, /\bответственн\w+\b/i])
+    ]));
+    const inputs = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+входы\b/i, /^\s*входы\s*:/i]),
+      ...pickInline(/\bвходы\s*:/i),
+      ...collectByWords([/\bвход\w*\b/i, /\bисточники?\b/i, /\binput\b/i])
+    ]));
+    const outputs = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+выходы\b/i, /^\s*выходы\s*:/i]),
+      ...pickInline(/\bвыходы\s*:/i),
+      ...collectByWords([/\bвыход\w*\b/i, /\bрезультат\w*\b/i, /\bartefact\b/i, /\bdeliverable\b/i, /\boutput\b/i])
+    ]));
+    const sla = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+sla\b/i, /^\s*sla\s*:/i]),
+      ...pickInline(/\bsla\s*:/i),
+      ...collectByWords([/\bsla\b/i, /уровень\s+сервиса/i, /время\s+(ответа|обработки)/i])
+    ]));
+    const kpi = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+kpi\b/i, /^\s*kpi\s*:/i, /^\s*метрики\s*:/i, /^\s*показатели\s*:/i]),
+      ...pickInline(/\b(kpi|метрики|показатели)\s*:/i),
+      ...collectByWords([/\bkpi\b/i, /\bметрик\w*\b/i, /\bпоказател\w*\b/i])
+    ]));
+    const risks = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+риски\b/i, /^\s*риски\s*:/i]),
+      ...pickInline(/\bриски\s*:/i),
+      ...collectByWords([/\bриск\w*\b/i, /угроз\w*/i, /проблем\w*/i, /pain\s*point/i])
+    ]));
+    const controls = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+контроли\b/i, /^\s*контроли\s*:/i, /^\s*контрмеры\s*:/i]),
+      ...pickInline(/\b(контроли|контрмеры)\s*:/i),
+      ...collectByWords([/контрол\w*/i, /провер\w*/i, /комплаенс/i, /mitigation/i, /процедур\w*/i])
+    ]));
+    const assumptions = Array.from(new Set([
+      ...pickSection([/^\s*#{1,6}\s+допущения\b/i, /^\s*допущения\s*:/i]),
+      ...pickInline(/\bдопущения\s*:/i),
+      ...collectByWords([/допущени\w*/i, /предпосылк\w*/i, /assumption/i])
+    ]));
     const facts: string[] = [];
     for (const l of lines) {
       const m = l.match(/^\s*([A-Za-zА-Яа-я0-9_\s]{2,20})\s*:\s*(.+)$/);
@@ -227,7 +277,7 @@ const ChatInterface = () => {
     const hasRisks = hLines.some(s => /риски/.test(s));
     const hasControls = hLines.some(s => /контроли/.test(s));
     const count = [hasGoals, hasRoles, hasIO, hasSla, hasRisks, hasControls].filter(Boolean).length;
-    if (count < 3) return true;
+    if (count < 2) return true;
     const tbls = text.match(/\n\|[^\n]*\|[\s\S]*?(?:\n\n|$)/g);
     if (tbls && tbls.length > 0) {
       const isBad = tbls.some(t => {
@@ -241,28 +291,69 @@ const ChatInterface = () => {
         const emptyLike = (v: string) => v === '' || /^(?:n\/a|unknown|tbd|—|-|нет)$/i.test(v);
         const emptyCount = cells.filter(emptyLike).length;
         const ratio = emptyCount / cells.length;
-        return ratio > 0.6;
+        return ratio > 0.8;
       });
       if (isBad) return true;
     }
     return false;
   };
 
-  const buildDataRequest = (userText: string, docText: string, baseKb?: KB) => {
-    const reqs: string[] = [];
+  const buildDataRequest = (userText: string, docText: string, _baseKb?: KB) => {
+    const text = String(docText || "");
+    const userFacts = extractFactsFromText(String(userText || ""));
+    const hLines = (text.match(/^#{1,6}\s+.*$/gm) || []).map(s => s.toLowerCase());
+    const hasGoals = hLines.some(s => /цели\b/.test(s));
+    const hasRoles = hLines.some(s => /роли|участники/.test(s));
+    const hasIO = hLines.some(s => /входы\/?выходы|входы|выходы/.test(s));
+    const hasSlaKpi = hLines.some(s => /sla|kpi|sla\/kpi/.test(s));
+    const hasRisks = hLines.some(s => /риски/.test(s));
+    const hasControls = hLines.some(s => /контроли/.test(s));
     const has = (arr?: string[]) => Array.isArray(arr) && arr.length > 0;
-    const kb0 = baseKb || defaultKb;
-    if (!/цели/i.test(docText) && !has(kb0.goals)) reqs.push("Уточните цели процесса/анализа (1–2 пункта)");
-    if (!/роли|участники/i.test(docText) && !has(kb0.roles)) reqs.push("Перечислите роли/участников процесса");
-    if (!/входы|выходы/i.test(docText) && !(has(kb0.inputs) || has(kb0.outputs))) reqs.push("Опишите ключевые входы и выходы процесса");
-    if (!/sla|kpi/i.test(docText) && !(has(kb0.sla) || has(kb0.kpi))) reqs.push("Укажите KPI/SLA (метрики и период)");
-    if (!/риски/i.test(docText) && !has(kb0.risks)) reqs.push("Добавьте основные риски (3–5 пунктов)");
-    if (!/контроли/i.test(docText) && !has(kb0.controls)) reqs.push("Опишите действующие контроли/контрмеры");
-    if (/\bN\/A\b|\bUNKNOWN\b|\bTBD\b|нет данных|данные отсутствуют/i.test(docText)) reqs.push("Предоставьте недостающие числовые значения и факты");
+    const reqs: string[] = [];
+    const hasGoalsUser = has(userFacts.goals);
+    const hasRolesUser = has(userFacts.roles);
+    const hasInputsUser = has(userFacts.inputs);
+    const hasOutputsUser = has(userFacts.outputs);
+    const hasSlaUser = has(userFacts.sla);
+    const hasKpiUser = has(userFacts.kpi);
+    const hasRisksUser = has(userFacts.risks);
+    const hasControlsUser = has(userFacts.controls);
+    if (!(hasGoals || hasGoalsUser)) reqs.push("Уточните цели процесса/анализа (1–2 пункта)");
+    if (!(hasRoles || hasRolesUser)) reqs.push("Перечислите роли и их ответственность");
+    if (!(hasIO || hasInputsUser || hasOutputsUser)) reqs.push("Опишите ключевые входы (источники) и выходы (результаты)");
+    if (!(hasSlaKpi || hasSlaUser || hasKpiUser)) reqs.push("Укажите KPI (метрика, цель, период) и SLA");
+    if (!(hasRisks || hasRisksUser)) reqs.push("Добавьте основные риски (3–5 пунктов)");
+    if (!(hasControls || hasControlsUser)) reqs.push("Опишите действующие контроли/проверки и ответственных");
+    if (/\bN\/A\b|\bUNKNOWN\b|\bTBD\b|нет данных|данные отсутствуют/i.test(text) || /\bN\/A\b|\bUNKNOWN\b|\bTBD\b|нет данных|данные отсутствуют/i.test(userText)) reqs.push("Предоставьте недостающие числовые значения и факты");
+    const tbls = text.match(/\n\|[^\n]*\|[\s\S]*?(?:\n\n|$)/g);
+    if (tbls && tbls.length > 0) {
+      const isBad = tbls.some(t => {
+        const rows = t
+          .split(/\n/)
+          .filter(l => /^\|.*\|\s*$/.test(l))
+          .map(l => l.replace(/^\|/, '').replace(/\|$/, '').split(/\|/).map(c => c.trim()));
+        const cells = rows.slice(2).flat();
+        if (cells.length === 0) return true;
+        const emptyLike = (v: string) => v === '' || /^(?:n\/a|unknown|tbd|—|-|нет)$/i.test(v);
+        const ratio = cells.filter(emptyLike).length / cells.length;
+        return ratio > 0.6;
+      });
+      if (isBad) reqs.push("Заполните пустые ячейки таблиц (более 60% пусто)");
+    }
     const uniq = Array.from(new Set(reqs));
-    const head = "Требуются уточнения для завершения документа:";
-    const body = uniq.map((q, i) => `- ${q}`).join("\n");
-    return `${head}\n\n${body}`;
+    if (uniq.length === 0) return "";
+    const present: string[] = [];
+    if (hasGoals || hasGoalsUser) present.push("Цели");
+    if (hasRoles || hasRolesUser) present.push("Роли");
+    if (hasIO || hasInputsUser || hasOutputsUser) present.push("Входы/выходы");
+    if (hasSlaKpi || hasSlaUser || hasKpiUser) present.push("SLA/KPI");
+    if (hasRisks || hasRisksUser) present.push("Риски");
+    if (hasControls || hasControlsUser) present.push("Контроли");
+    const head1 = "Уже указано:";
+    const head2 = "Нужно уточнить:";
+    const body1 = present.length ? present.map(s => `- ${s}`).join("\n") : "- —";
+    const body2 = uniq.map(q => `- ${q}`).join("\n");
+    return `${head1}\n\n${body1}\n\n${head2}\n\n${body2}`;
   };
 
   const buildHtmlDocument = (md: string) => {
@@ -358,10 +449,18 @@ ${htmlBody}
           blocks.push({ type: "table", rows });
           continue;
         }
-        if (/^\s*[-*+]\s+/.test(line) || /^\s*\d+\.\s+/.test(line)) {
-          const ordered = /^\s*\d+\.\s+/.test(line);
+        if (/^\s*[-*+]\s+/.test(line) || /^\s*•\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line)) {
+          const ordered = /^\s*\d+[.)]\s+/.test(line);
           const items: string[] = [];
-          while (i < lines.length && ((ordered && /^\s*\d+\.\s+/.test(lines[i])) || (!ordered && /^\s*[-*+]\s+/.test(lines[i])))) { items.push(lines[i].replace(/^\s*[-*+\d.]+\s+/, "").trim()); i++; }
+          while (
+            i < lines.length && (
+              (ordered && /^\s*\d+[.)]\s+/.test(lines[i])) ||
+              (!ordered && (/^\s*[-*+]\s+/.test(lines[i]) || /^\s*•\s+/.test(lines[i])))
+            )
+          ) {
+            items.push(lines[i].replace(/^\s*([-*+]|•|\d+[.)])\s+/, "").trim());
+            i++;
+          }
           blocks.push({ type: "list", items, ordered });
           continue;
         }
@@ -606,6 +705,109 @@ ${htmlBody}
     return blob;
   };
 
+  const isDocLikeText = (txt: string) => {
+    const t = String(txt || "");
+    const heads = (t.match(/^#{1,6}\s+.+$/gm) || []).length;
+    const mermaids = Array.from(t.matchAll(/```\s*mermaid[\s\S]*?```/gi)).length;
+    const hasKeyWords = /цели\b|роли\b|входы|выходы|sla|kpi|риски|контроли/i.test(t);
+    return heads >= 2 || mermaids >= 1 || hasKeyWords;
+  };
+
+  const buildLocalDoc = (userText: string): string => {
+    const facts = extractFactsFromText(userText);
+    const merged = mergeKb(kb, facts);
+    const escapeCell = (s: string) => String(s || "").replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+    const makeTable = (headers: string[], rows: string[][]) => {
+      if (!rows.length) return "";
+      const head = `| ${headers.map(escapeCell).join(" | ")} |`;
+      const sep = `| ${headers.map(() => ":-").join(" | ")} |`;
+      const body = rows.map(r => `| ${r.map(escapeCell).join(" | ")} |`).join("\n");
+      return `${head}\n${sep}\n${body}\n\n`;
+    };
+    const hasSome = [merged.goals, merged.roles, merged.inputs, merged.outputs, merged.sla, merged.kpi, merged.risks, merged.controls]
+      .some(arr => Array.isArray(arr) && arr.length > 0);
+    if (!hasSome && !userText.trim()) return "";
+    const title = `# Документ задачи\n\n`;
+    const ctx = userText.trim() ? `## Контекст\n\n${userText.trim().split(/\r?\n/).slice(0, 10).join("\n")}\n\n` : "";
+    const inputsRows = (merged.inputs || []).slice(0, 8).map(x => ["Вход", x]);
+    const outputsRows = (merged.outputs || []).slice(0, 8).map(x => ["Выход", x]);
+    const ioTable = makeTable(["Тип", "Элемент"], [...inputsRows, ...outputsRows]);
+    const kpiRows = (merged.kpi || []).slice(0, 8).map(x => [x]);
+    const slaRows = (merged.sla || []).slice(0, 8).map(x => [x]);
+    const kpiTable = makeTable(["Показатель"], kpiRows);
+    const slaTable = makeTable(["SLA"], slaRows);
+    const sectionList = (name: string, arr: string[]) => arr.length ? `## ${name}\n\n${arr.slice(0, 6).map(x => `- ${x}`).join("\n")}\n\n` : "";
+    const buildMermaid = () => {
+      const hasInputs = Array.isArray(merged.inputs) && merged.inputs.length > 0;
+      const hasOutputs = Array.isArray(merged.outputs) && merged.outputs.length > 0;
+      const goal = (merged.goals || [])[0] || "Процесс";
+      if (!hasInputs && !hasOutputs && !goal) return "";
+      const esc = (s: string) => String(s || "").replace(/"/g, "'").replace(/\r?\n/g, " ");
+      let code = "flowchart LR\n";
+      code += `P["${esc(goal)}"]\n`;
+      merged.inputs.slice(0, 5).forEach((v, i) => { code += `I${i}["${esc(v)}"]\nI${i}-->P\n`; });
+      merged.outputs.slice(0, 5).forEach((v, i) => { code += `P-->O${i}["${esc(v)}"]\n`; });
+      return `\n\n\`\`\`mermaid\n${code}\n\`\`\`\n\n`;
+    };
+    const body =
+      sectionList("Цели процесса", merged.goals) +
+      sectionList("Роли", merged.roles) +
+      (ioTable ? `## Входы/выходы\n\n${ioTable}` : "") +
+      (kpiTable ? `## KPI\n\n${kpiTable}` : "") +
+      (slaTable ? `## SLA\n\n${slaTable}` : "") +
+      sectionList("Риски", merged.risks) +
+      sectionList("Контроли", merged.controls) +
+      buildMermaid();
+    return (title + ctx + body).trim();
+  };
+
+  const buildLocalChatReply = (userText: string): string => {
+    const t = userText.toLowerCase();
+    if (/\b(sla|service\s*level\s*agreement)\b/i.test(userText)) {
+      return "SLA в банковских процессах — согласованный уровень сервиса для клиента и внутренних пользователей. Типичные метрики: время обработки (TAT), доступность (%) за период, доля успешных операций и точность данных. Измерение: медиана и 95‑й перцентиль времени по ключевым этапам, аптайм систем, First Pass Yield и доля повторных обращений. Для контроля SLA формируют KPI, пороги и процедуры эскалации.";
+    }
+    if (/\bkpi\b|метрик|метрики/i.test(t)) {
+      return "KPI в банке — измеримые индикаторы достижения целей процесса/продукта: TAT, конверсия, точность, отказоустойчивость, NPS. Формулируют определение, формулу, периодичность, источник данных и пороговые значения. KPI связывают с SLA и бизнес‑целями, используют дашборды и алерты.";
+    }
+    if (/\bbrd\b|тз|требован/i.test(t)) {
+      return "BRD — документ бизнес‑требований: цель, описание, scope, стейкхолдеры, бизнес‑правила, нефункциональные требования, ограничения, риски и KPI. Сначала собирают и валидируют требования с владельцами процесса, затем согласуют версию и передают в разработку.";
+    }
+    if (/use\s*case|вариант[ы]?\s*использования/i.test(t)) {
+      return "Use Case — акторы, цели и сценарии взаимодействия с системой (основной и альтернативные потоки), предусловия и постусловия. Для каждого UC описывают шаги, исключения и критерии завершения; используют диаграммы и таблицы сценариев.";
+    }
+    if (/user\s*stor|юзер\s*стор|пользовательск(ие|ая)\s*истор/i.test(t)) {
+      return "User Stories — краткие требования в формате ‘Как [роль], хочу [ценность], чтобы [результат]’ с критериями приемки (GWT) и приоритетом. Stories группируют в EPIC, поддерживают допущения и Dependencies.";
+    }
+    if (/диаграмм|mermaid|мермейд/i.test(t)) {
+      return "Диаграммы процесса удобно фиксировать в mermaid (flowchart LR): этапы, развилки и результаты. Для банковских процессов отражают проверки, эскалации и точки интеграции; одна диаграмма на документ — достаточно для обзора.";
+    }
+    if (/привет|здравствуй|hello|hi/i.test(t)) {
+      return "Здравствуйте. Готов помочь с задачей или ответить на вопрос.";
+    }
+    if (/платеж|перевод|эквайринг|swift|sepa|карта|visa|mastercard/i.test(t)) {
+      return "Платёжный процесс: авторизация, антифрод‑чек, клиринг/сеттлмент. Важные метрики: доля успешных авторизаций, TAT на обработку, chargeback rate. Интеграции: процессинг, антифрод, Core Banking.";
+    }
+    if (/kyc|идентификац|верификац|санкц|pep|aml|отмывани/i.test(t)) {
+      return "KYC/AML: сбор и проверка клиента, санкционные/PEP чек‑листы, оценка риска. Метрики: время онбординга, доля отклонённых, качество матчей. Используются внешние провайдеры, правила комплаенса и аудит.";
+    }
+    if (/кредит|ипотек|скоринг|pd\b|lgd\b|od\b|заём|займ/i.test(t)) {
+      return "Кредитный процесс: заявка → скоринг → решение → выдача → сопровождение. KPI: одобрение, дефолт‑рейт, TAT по этапам. Источники: БКИ, анкетные данные, поведенческие признаки.";
+    }
+    if (/фрод|мошенн|fraud/i.test(t)) {
+      return "Антифрод: правила, модели, real‑time мониторинг. KPI: precision/recall, false positive rate, время реагирования. Необходимы интеграции с каналами, процессингом и Case Management.";
+    }
+    if (/api|интеграц|esb|шина|kafka|soap|rest/i.test(t)) {
+      return "Интеграции: REST/SOAP, события (Kafka), идемпотентность и трассировка. Требования: контракты, версии, ретраи, SLAs на отклик и доступность.";
+    }
+    if (/счет|баланс|проводк|gl\b|бэк-?офис|core\s*bank/i.test(t)) {
+      return "Core Banking: счета, проводки, GL, ночная обработка. Важны согласованность данных, контроль дублирования, восстановление после отказов, аудит операций.";
+    }
+    if (/канал|мобильн|онлайн|чат\b|бот\b|web\b/i.test(t)) {
+      return "Каналы: Web/Mobile, доступность, производительность, безопасность. Метрики: аптайм, среднее время ответа, конверсия по ключевым сценариям.";
+    }
+    return "Опишите банковский контекст и цель: процесс, роли, входы/выходы, SLA/KPI. По запросу создам диаграмму mermaid и таблицы метрик.";
+  };
+
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
@@ -617,8 +819,45 @@ ${htmlBody}
     updateKbFromText(userMessage);
     setIsLoading(true);
 
+    const prevAssistantTextPre = messages.filter(m => m.role === 'assistant').map(m => m.content).join("\n\n");
+    const preIntentDoc = (
+      /(создай|создать|сгенерируй|сгенерировать|оформи|оформить|собери|собрать\s+документ|сделай\s+документ|составь\s+документацию|сделай\s+документацию|документируй|задокументируй|подготовь|подготовить|сформируй|сформировать|дай\b|выдай\b|экспортируй|прикрепи)/i.test(userMessage)
+      || /(html|pdf|docx|xlsx)\b/i.test(userMessage)
+      || /(диаграмм|mermaid|мермейд)/i.test(userMessage)
+      || /(таблиц|таблица)/i.test(userMessage)
+      || (/продолжи|продолжай/i.test(userMessage) && isDocLikeText(prevAssistantTextPre))
+    );
+
     try {
-      if (!supabase) throw new Error("Supabase не сконфигурирован");
+      if (!supabase) {
+        const mode = preIntentDoc ? "doc" : "chat";
+        if (mode === "doc") {
+          const finalDoc = buildLocalDoc(userMessage);
+          if (!finalDoc.trim()) {
+            setMessages(prev => [...prev, { role: "assistant", content: "Требуются данные: укажите цели, роли, входы/выходы, KPI/SLA или контекст." }]);
+            return;
+          }
+          const htmlBlob = generateHtmlBlob(finalDoc);
+          const docxBlob = await generateDocxBlob(finalDoc);
+          const pdfBlob = await generatePdfBlob(finalDoc);
+          const xlsxBlob = generateXlsxBlob(finalDoc);
+          updateKbFromText(finalDoc);
+          const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, "-");
+          const createUrl = (b: Blob) => URL.createObjectURL(b);
+          const attachments = [
+            { type: "html" as const, name: `BA_Document_${stamp}.html`, url: createUrl(htmlBlob) },
+            { type: "docx" as const, name: `BA_Document_${stamp}.docx`, url: createUrl(docxBlob) },
+            { type: "pdf" as const, name: `BA_Document_${stamp}.pdf`, url: createUrl(pdfBlob) },
+            { type: "xlsx" as const, name: `BA_Document_${stamp}.xlsx`, url: createUrl(xlsxBlob) },
+          ];
+          setMessages(prev => [...prev, { role: "assistant", content: finalDoc, attachments }]);
+          return;
+        } else {
+          const reply = buildLocalChatReply(userMessage);
+          setMessages(prev => [...prev, { role: "assistant", content: reply }]);
+          return;
+        }
+      }
       const prevAsk = messages.some(m => m.role === 'assistant' && /Требуются уточнения/i.test(m.content));
       const normalize = (s: string) => s.toLowerCase().replace(/ё/g, 'е').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
       const tokenize = (s: string) => normalize(s).split(' ').filter(Boolean);
@@ -641,7 +880,56 @@ ${htmlBody}
       };
       const needStems = ["нужн", "необ", "треб", "надо", "минимум", "обязат", "перечень", "список", "сведен", "данн"];
       const docStems = ["документ", "документац", "тз", "srs", "brd", "frd", "тех", "требован", "артефакт", "use", "user", "истор", "кей" ];
+      const proceedVerbPatterns = [
+        /создай/i, /создать/i, /сгенерируй/i, /сгенерировать/i, /оформи/i, /оформить/i,
+        /сделай/i, /делай/i, /подготовь/i, /подготовить/i, /сформируй/i, /сформировать/i,
+        /выдай/i, /дай/i, /выпусти/i, /собери/i, /экспортируй/i, /прикрепи/i, /сгенери/i,
+        /собрать\s+документ/i, /сделать\s+документ/i, /документируй/i, /задокументируй/i,
+        /продолжи/i, /продолжить/i, /продолжай/i,
+        /составь\s+документацию/i, /сделай\s+документацию/i, /оформи\s+документацию/i
+      ];
+      const proceedQualPatterns = [
+        /с\s*тем\s*что\s*(есть|я\s*прислал|отправил|написал)/i,
+        /без\s*доп(олнительной)?\s*информации/i,
+        /без\s*уточнений/i,
+        /без\s*вопросов/i,
+        /не\s*буду\s*предоставлять/i,
+        /используй\s*то\s*что\s*есть/i,
+        /только\s*из\s*моих\s*данных/i,
+        /только\s*из\s*предоставленной/i,
+        /на\s*основе\s*имеющихся\s*данных/i,
+        /на\s*основе\s*моих\s*данных/i,
+        /на\s*основе\s*предоставленной\s*информации/i,
+        /прямо\s*сейчас/i,
+        /как\s*есть/i,
+        /исходя\s*из\s*наличия/i,
+        /с\s*текущей\s*информацией/i,
+        /с\s*текущими\s*данными/i,
+        /с\s*имеющимися\s*данными/i,
+        /не\s*спрашивай/i,
+        /не\s*уточняй/i
+      ];
+      const negativeCreationPatterns = [/не\s*(создавай|создавать|генерируй|генерировать|делай|делать|оформи|оформляй|оформить|сформируй|сформировать|подготавливай|подготовь)/i];
+      const forceProceed = proceedVerbPatterns.some(r => r.test(userMessage)) && proceedQualPatterns.some(r => r.test(userMessage));
+      const questionWords = [/\bчто\b/i, /\bкакие\b/i, /\bкакая\b/i, /\bкак\b/i, /\bзачем\b/i, /\bпочему\b/i, /\bсколько\b/i, /\bкогда\b/i, /\bгде\b/i, /\bкто\b/i];
+      const isQuestionLike = /\?/i.test(userMessage) || questionWords.some(r => r.test(userMessage.trim()));
+      const lastAssistantText = messages.filter(m => m.role === 'assistant').map(m => m.content).join("\n\n");
+      const looksDocLike = (txt: string) => {
+        const t = String(txt || "");
+        const heads = (t.match(/^#{1,6}\s+.+$/gm) || []).length;
+        const mermaids = Array.from(t.matchAll(/```\s*mermaid[\s\S]*?```/gi)).length;
+        const hasKeyWords = /цели\b|роли\b|входы|выходы|sla|kpi|риски|контроли/i.test(t);
+        return heads >= 2 || mermaids >= 1 || hasKeyWords;
+      };
+      const createDocIntent = (
+        proceedVerbPatterns.some(r => r.test(userMessage)) && !negativeCreationPatterns.some(r => r.test(userMessage))
+      ) || (
+        /продолжи|продолжай/i.test(userMessage) && looksDocLike(lastAssistantText)
+      ) || (
+        containsStem(userMessage, ["созд", "сформир", "оформ", "подготов", "сдел"], 2) && !containsStem(userMessage, ["не"], 0)
+      );
       const missingPhrasePatterns = [
+        /^\s*какие\??\s*$/i,
         /какой\s+(информации|данных)\s+не\s*(хватает|доста[её]т)/i,
         /чего\s+не\s*хватает/i,
         /какие\s+данные\s+нужны/i,
@@ -674,62 +962,34 @@ ${htmlBody}
         /какие\s+сведения\s+нужны/i,
         /какой\s+набор\s+данных\s+требуется/i
       ];
-      const askForMissing = missingPhrasePatterns.some(r => r.test(userMessage)) || containsStem(userMessage, needStems) && containsStem(userMessage, docStems) || (/\bкакие\b/i.test(userMessage) && prevAsk);
-      const proceedVerbPatterns = [
-        /создай/i, /создать/i, /сгенерируй/i, /сгенерировать/i, /оформи/i, /оформить/i,
-        /сделай/i, /делай/i, /подготовь/i, /подготовить/i, /сформируй/i, /сформировать/i,
-        /выдай/i, /дай/i, /выпусти/i, /собери/i, /экспортируй/i, /прикрепи/i, /сгенери/i,
-        /собрать\s+документ/i, /сделать\s+документ/i, /документируй/i, /задокументируй/i,
-        /составь\s+документацию/i, /сделай\s+документацию/i, /оформи\s+документацию/i
-      ];
-      const proceedQualPatterns = [
-        /с\s*тем\s*что\s*(есть|я\s*прислал|отправил|написал)/i,
-        /без\s*доп(олнительной)?\s*информации/i,
-        /без\s*уточнений/i,
-        /без\s*вопросов/i,
-        /не\s*буду\s*предоставлять/i,
-        /используй\s*то\s*что\s*есть/i,
-        /только\s*из\s*моих\s*данных/i,
-        /только\s*из\s*предоставленной/i,
-        /на\s*основе\s*имеющихся\s*данных/i,
-        /на\s*основе\s*моих\s*данных/i,
-        /на\s*основе\s*предоставленной\s*информации/i,
-        /прямо\s*сейчас/i,
-        /как\s*есть/i,
-        /исходя\s*из\s*наличия/i,
-        /с\s*текущей\s*информацией/i,
-        /с\s*текущими\s*данными/i,
-        /с\s*имеющимися\s*данными/i,
-        /не\s*спрашивай/i,
-        /не\s*уточняй/i
-      ];
-      const negativeCreationPatterns = [/не\s*(создавай|создавать|генерируй|генерировать|делай|делать|оформи|оформляй|оформить|сформируй|сформировать|подготавливай|подготовь)/i];
-      const forceProceed = proceedVerbPatterns.some(r => r.test(userMessage)) && proceedQualPatterns.some(r => r.test(userMessage));
-      const questionWords = [/\bчто\b/i, /\bкакие\b/i, /\bкакая\b/i, /\bкак\b/i, /\bзачем\b/i, /\bпочему\b/i, /\bсколько\b/i, /\bкогда\b/i, /\bгде\b/i, /\bкто\b/i];
-      const isQuestionLike = /\?/i.test(userMessage) || questionWords.some(r => r.test(userMessage.trim()));
-      const createDocIntent = proceedVerbPatterns.some(r => r.test(userMessage)) && !negativeCreationPatterns.some(r => r.test(userMessage)) || (containsStem(userMessage, ["созд", "сформир", "оформ", "подготов", "сдел"], 2) && !containsStem(userMessage, ["не"], 0));
-      if (askForMissing) {
-        const lastAssistant = messages.filter(m => m.role === 'assistant').map(m => m.content).join("\n\n");
-        const ask = buildDataRequest(userMessage, lastAssistant || "", kb);
+      const userFactsQuick = extractFactsFromText(userMessage);
+      const hasSomeFacts = [
+        userFactsQuick.goals, userFactsQuick.roles, userFactsQuick.inputs, userFactsQuick.outputs,
+        userFactsQuick.sla, userFactsQuick.kpi, userFactsQuick.risks, userFactsQuick.controls
+      ].some(arr => Array.isArray(arr) && arr.length > 0);
+      if (preIntentDoc && !forceProceed && !hasSomeFacts) {
+        const ask = buildDataRequest(userMessage, "", kb) || "Уточните минимальные данные: цели, роли или входы/выходы.";
         setMessages(prev => [...prev, { role: "assistant", content: ask }]);
         return;
       }
-      if (!createDocIntent && isQuestionLike) {
+      const askForMissing = isQuestionLike && !createDocIntent && !forceProceed && !hasSomeFacts && (
+        missingPhrasePatterns.some(r => r.test(userMessage)) ||
+        (containsStem(userMessage, needStems) && containsStem(userMessage, docStems)) ||
+        (/\bкакие\b/i.test(userMessage) && prevAsk)
+      );
+      if (!createDocIntent && askForMissing) {
         const lastAssistant = messages.filter(m => m.role === 'assistant').map(m => m.content).join("\n\n");
         const ask = buildDataRequest(userMessage, lastAssistant || "", kb);
-        setMessages(prev => [...prev, { role: "assistant", content: ask }]);
-        return;
+        if (ask.trim()) { setMessages(prev => [...prev, { role: "assistant", content: ask }]); return; }
+        // если нечего уточнять — продолжаем обычный поток
       }
-      const systemInstruction = "Ты профессиональный бизнес-аналитик, работающий для банка. Создавай только структурированные банковские документы в Markdown. Обязательные разделы: цели процесса, роли, входы/выходы, SLA/KPI, риски и контроли. Для процессов добавляй ровно один блок Mermaid (flowchart LR), без служебных строк/версий. Используй компактные горизонтальные таблицы, избегай вертикальных таблиц; если данных мало — используй списки. Без приветствий и пояснений, только документ.";
+      // Не запрашиваем недостающие данные для обычных вопросов без документного контекста
+      const docInstruction = "Ты профессиональный бизнес-аналитик, работающий для банка. Строго сохраняй банковскую тематику: игнорируй несвязанные темы. Создавай только структурированные банковские документы в Markdown. Обязательные разделы: цели процесса, роли, входы/выходы, SLA/KPI, риски и контроли. Для процессов добавляй ровно один блок Mermaid (flowchart LR). Используй компактные горизонтальные таблицы. Не придумывай и не заполняй отсутствующие данные. Если информации недостаточно — запроси недостающее и не добавляй пустые таблицы. Без приветствий и пояснений, только документ.";
+      const chatInstruction = "Ты профессиональный бизнес-аналитик для банка. Отвечай кратко и по делу, без генерации документа. Не создавай Markdown‑заголовки, таблицы и блоки кода, если прямо не попросили. Используй только предоставленную информацию, не придумывай отсутствующие данные. Если данных недостаточно — коротко уточни, что нужно.";
       const kbSummary = buildKnowledgeSummary(kb);
-      const apiMessages = [
-        { role: "system", content: systemInstruction },
-        ...(kbSummary ? [{ role: "system", content: kbSummary }] : []),
-        ...messages,
-        { role: "user", content: userMessage },
-      ];
+      const mode = preIntentDoc ? "doc" : "chat";
       const { data, error } = await supabase.functions.invoke("ba-assistant", {
-        body: { messages: apiMessages, options: { publish, domain: "ba", confluence: { baseUrl: confBaseUrl, spaceKey: confSpaceKey, parentPageId: confParentId, email: confEmail, apiToken: confToken, title: confTitle } } }
+        body: { messages: [{ role: "system", content: mode === "doc" ? docInstruction : chatInstruction }, ...(kbSummary ? [{ role: "system", content: kbSummary }] : []), ...messages, { role: "user", content: userMessage }], options: { publish, mode, domain: "banking", confluence: { baseUrl: confBaseUrl, spaceKey: confSpaceKey, parentPageId: confParentId, email: confEmail, apiToken: confToken, title: confTitle } } }
       });
       if (error) throw error;
       const resp = String(data.response || "");
@@ -768,9 +1028,9 @@ ${htmlBody}
         return miss;
       };
       let attempts = 0;
-      while (!isCompleteDoc(unwrapped) && attempts < 3) {
+      while (mode === "doc" && !isCompleteDoc(unwrapped) && attempts < 3) {
         const continuation = [
-          { role: "system", content: systemInstruction },
+          { role: "system", content: docInstruction },
           ...messages,
           { role: "user", content: userMessage },
           { role: "assistant", content: unwrapped },
@@ -783,9 +1043,9 @@ ${htmlBody}
         if (cont.trim()) { unwrapped = unwrapped + "\n\n" + cont; }
         attempts++;
       }
-      if (!isCompleteDoc(unwrapped)) {
+      if (mode === "doc" && !isCompleteDoc(unwrapped)) {
         const continuation = [
-          { role: "system", content: systemInstruction },
+          { role: "system", content: docInstruction },
           ...messages,
           { role: "user", content: userMessage },
           { role: "assistant", content: unwrapped },
@@ -805,10 +1065,27 @@ ${htmlBody}
         .filter(l => !/^\s*(Пользователь|User|Assistant|Ассистент)\s*:/.test(l))
         .join("\n");
       const cleaned = trimTrailingMeta(cleaned0);
-      if (needsMoreData(cleaned) && !forceProceed) {
+      if (mode === "doc" && (needsMoreData(cleaned) || !hasSomeFacts) && !forceProceed) {
         const ask = buildDataRequest(userMessage, cleaned, kb);
-        setMessages(prev => [...prev, { role: "assistant", content: ask }]);
-      } else {
+        if (ask.trim()) {
+          setMessages(prev => [...prev, { role: "assistant", content: ask }]);
+        } else {
+          const finalDoc = cleaned;
+          const htmlBlob = generateHtmlBlob(finalDoc);
+          const docxBlob = await generateDocxBlob(finalDoc);
+          const pdfBlob = await generatePdfBlob(finalDoc);
+          const xlsxBlob = generateXlsxBlob(finalDoc);
+          updateKbFromText(finalDoc);
+          const createUrl = (b: Blob) => URL.createObjectURL(b);
+          const attachments = [
+            { type: "html" as const, name: `BA_Document_${stamp}.html`, url: createUrl(htmlBlob) },
+            { type: "docx" as const, name: `BA_Document_${stamp}.docx`, url: createUrl(docxBlob) },
+            { type: "pdf" as const, name: `BA_Document_${stamp}.pdf`, url: createUrl(pdfBlob) },
+            { type: "xlsx" as const, name: `BA_Document_${stamp}.xlsx`, url: createUrl(xlsxBlob) },
+          ];
+          setMessages(prev => [...prev, { role: "assistant", content: finalDoc, attachments }]);
+        }
+      } else if (mode === "doc" && hasSomeFacts) {
         const finalDoc = cleaned;
         const htmlBlob = generateHtmlBlob(finalDoc);
         const docxBlob = await generateDocxBlob(finalDoc);
@@ -823,6 +1100,12 @@ ${htmlBody}
           { type: "xlsx" as const, name: `BA_Document_${stamp}.xlsx`, url: createUrl(xlsxBlob) },
         ];
         setMessages(prev => [...prev, { role: "assistant", content: finalDoc, attachments }]);
+      } else if (mode === "doc") {
+        const ask = buildDataRequest(userMessage, cleaned, kb) || "Уточните минимальные данные: цели, роли или входы/выходы.";
+        setMessages(prev => [...prev, { role: "assistant", content: ask }]);
+      } else {
+        const concise = stripMeta(trimTrailingMeta(unwrapped)).split(/\r?\n/).slice(0, 40).join("\n");
+        setMessages(prev => [...prev, { role: "assistant", content: concise }]);
       }
       if (publish) {
         if (data?.confluence?.published && data?.confluence?.url) {
@@ -832,12 +1115,35 @@ ${htmlBody}
         }
       }
     } catch (error) {
-      console.error("Error:", error);
-      toast({
-        title: "Ошибка",
-        description: "Не удалось получить ответ. Проверьте Supabase настройки.",
-        variant: "destructive",
-      });
+      try {
+        const mode = preIntentDoc ? "doc" : "chat";
+        if (mode === "doc") {
+          const finalDoc = buildLocalDoc(userMessage);
+          if (!finalDoc.trim()) {
+            setMessages(prev => [...prev, { role: "assistant", content: "Требуются данные: укажите цели, роли, входы/выходы, KPI/SLA или контекст." }]);
+            return;
+          }
+          const htmlBlob = generateHtmlBlob(finalDoc);
+          const docxBlob = await generateDocxBlob(finalDoc);
+          const pdfBlob = await generatePdfBlob(finalDoc);
+          const xlsxBlob = generateXlsxBlob(finalDoc);
+          updateKbFromText(finalDoc);
+          const stamp = new Date().toISOString().slice(0,19).replace(/[:T]/g, "-");
+          const createUrl = (b: Blob) => URL.createObjectURL(b);
+          const attachments = [
+            { type: "html" as const, name: `BA_Document_${stamp}.html`, url: createUrl(htmlBlob) },
+            { type: "docx" as const, name: `BA_Document_${stamp}.docx`, url: createUrl(docxBlob) },
+            { type: "pdf" as const, name: `BA_Document_${stamp}.pdf`, url: createUrl(pdfBlob) },
+            { type: "xlsx" as const, name: `BA_Document_${stamp}.xlsx`, url: createUrl(xlsxBlob) },
+          ];
+          setMessages(prev => [...prev, { role: "assistant", content: finalDoc, attachments }]);
+        } else {
+          const reply = buildLocalChatReply(userMessage);
+          setMessages(prev => [...prev, { role: "assistant", content: reply }]);
+        }
+      } catch {
+        toast({ title: "Ошибка", description: "Не удалось обработать локально.", variant: "destructive" });
+      }
     } finally {
       setIsLoading(false);
     }
